@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 420" role="img">
+<title>Scoutbee badge icon</title>
+<desc>A bee mascot inside a coin-like badge ring, with a faint map grid behind it and a magnifying glass containing a tiny location pin, signaling geospatial data search. Square canvas for use as a repo avatar.</desc>
+<defs>
+<clipPath id="bodyClip"><ellipse cx="210" cy="230" rx="70" ry="85"/></clipPath>
+<clipPath id="ringClip"><circle cx="210" cy="210" r="158"/></clipPath>
+</defs>
+
+<circle cx="210" cy="210" r="175" fill="none" stroke="#2A211B" stroke-width="2"/>
+<circle cx="210" cy="210" r="160" fill="none" stroke="#B4B2A9" stroke-width="1" stroke-dasharray="3 4"/>
+
+<g clip-path="url(#ringClip)" opacity="0.3">
+  <line x1="150" y1="50" x2="150" y2="370" stroke="#8FB9D6" stroke-width="1"/>
+  <line x1="210" y1="50" x2="210" y2="370" stroke="#8FB9D6" stroke-width="1"/>
+  <line x1="270" y1="50" x2="270" y2="370" stroke="#8FB9D6" stroke-width="1"/>
+  <line x1="50" y1="130" x2="370" y2="130" stroke="#8FB9D6" stroke-width="1"/>
+  <line x1="50" y1="210" x2="370" y2="210" stroke="#8FB9D6" stroke-width="1"/>
+  <line x1="50" y1="290" x2="370" y2="290" stroke="#8FB9D6" stroke-width="1"/>
+</g>
+
+<g transform="rotate(-20 132 170)"><ellipse cx="132" cy="170" rx="54" ry="30" fill="#CFE8F7" opacity="0.9"/></g>
+<g transform="rotate(20 268 170)"><ellipse cx="268" cy="170" rx="54" ry="30" fill="#CFE8F7" opacity="0.9"/></g>
+
+<ellipse cx="210" cy="230" rx="70" ry="85" fill="#F2A623"/>
+<g clip-path="url(#bodyClip)">
+  <rect x="138" y="200" width="144" height="20" rx="10" fill="#2A211B"/>
+  <rect x="138" y="238" width="144" height="20" rx="10" fill="#2A211B"/>
+  <rect x="138" y="276" width="144" height="20" rx="10" fill="#2A211B"/>
+</g>
+
+<polygon points="195,310 225,310 210,333" fill="#2A211B"/>
+
+<path d="M182,95 Q167,65 157,50" stroke="#2A211B" stroke-width="4" fill="none" stroke-linecap="round"/>
+<circle cx="157" cy="50" r="5" fill="#2A211B"/>
+<path d="M238,95 Q253,65 263,50" stroke="#2A211B" stroke-width="4" fill="none" stroke-linecap="round"/>
+<circle cx="263" cy="50" r="5" fill="#2A211B"/>
+
+<circle cx="210" cy="125" r="40" fill="#2A211B"/>
+<circle cx="192" cy="120" r="9" fill="#FFFFFF"/>
+<circle cx="228" cy="120" r="9" fill="#FFFFFF"/>
+<circle cx="194" cy="121" r="4" fill="#2A211B"/>
+<circle cx="226" cy="121" r="4" fill="#2A211B"/>
+
+<line x1="295" y1="310" x2="315" y2="330" stroke="#2A211B" stroke-width="7" stroke-linecap="round"/>
+<circle cx="275" cy="290" r="28" fill="#FFFFFF" stroke="#2A211B" stroke-width="6"/>
+<circle cx="275" cy="283" r="7" fill="#F2A623"/>
+<polygon points="270,288 280,288 275,301" fill="#F2A623"/>
+</svg>
