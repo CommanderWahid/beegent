@@ -74,7 +74,15 @@ reach the final output.
 ## Models
 
 Model choice is manual and fixed — edit `config.py` or set the env var; nothing is
-auto-detected at runtime. Sizing note for an 8 GB RTX 4070 Laptop: `llama3.1:8b` fits
+auto-detected at runtime. **Bigger is not automatically better here.** Ablating the planner on
+France/buildings: `llama3.1:8b` named IGN (the correct authoritative publisher) in 12 s with the
+prompt unchanged, while `qwen3:14b` (84 s) and `deepseek-r1:14b` (53 s) both missed it — the
+thinking models spend their reasoning abstracting into *categories* of publisher ("official
+national open data portal", "academic institutions") and never name an institution. Prompted to
+name one, `deepseek-r1:14b` invented a wrong name for IGN. Known limitation of the fix: models
+do sometimes fabricate plausible-sounding agency names (e.g. "Kenya National Mapping Agency",
+which is not a real body — Kenya's is the Survey of Kenya). Search is fuzzy enough that this
+usually degrades gracefully, but the angle text is not a reliable source of institution names. Sizing note for an 8 GB RTX 4070 Laptop: `llama3.1:8b` fits
 entirely in VRAM, tool-calls reliably (~8 s/turn) and classifies in ~3 s, while `qwen3:14b`
 spills to CPU and always emits reasoning tokens (~90 s/call), which makes the per-angle
 search loop crawl. The search & explore role needs a tool-capable model;

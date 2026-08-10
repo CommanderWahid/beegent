@@ -11,18 +11,9 @@ LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 # Model name is backend-specific: an Ollama model tag when LLM_BACKEND=ollama,
 # or a Databricks serving-endpoint name when LLM_BACKEND=databricks.
 #
-# Measured on this box (RTX 4070 Laptop, 8GB): llama3.1:8b fits entirely in VRAM
-# and answers a tool-calling turn in ~8s / a JSON classification in ~3s.
-# qwen3:14b tool-calls correctly too but spills to CPU and always emits
-# reasoning tokens -> ~90s per call, which makes the search loop unusable.
-# Swap these if you pull something that fits (e.g. qwen3:8b).
+# Local setup (RTX 4070 Laptop, 8GB)
 PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "deepseek-r1:14b")
 SEARCH_EXPLORE_MODEL = os.environ.get("SEARCH_EXPLORE_MODEL", "qwen3:8b")
-# Triage runs once per candidate and answers a binary question, so reliability beats depth.
-# Measured: llama3.1:8b ~2.7s per verdict with no reasoning phase and no empty completions
-# across 18 calls, vs qwen3:4b spending ~12,800 chars of reasoning per yes/no and occasionally
-# returning empty content under GPU pressure. Trade-off: the weaker model also makes the
-# publisher guess that feeds the escalation gate's diversity check.
 TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "llama3.1:8b")  # small/cheap - once per candidate
 CRITIC_MODEL = os.environ.get("CRITIC_MODEL", "deepseek-r1:14b")  # rare calls, highest stakes
 
@@ -46,7 +37,10 @@ MIN_CANDIDATES = 2  # escalation gate: fewer than this -> call the critic
 SINGLE_PUBLISHER_MIN_CANDIDATES = 3
 MAX_FINAL_CANDIDATES = 6
 TRIAGE_CONFIDENCE_FLOOR = 0.5
-MAX_PER_DOMAIN = 3  # so one site can't flood the candidate list
+# So one site can't flood the list - but not so tight that a country whose open data is
+# concentrated on a single national portal loses its best datasets. data.gouv.fr hit the old
+# cap of 3 and would have discarded IGN's BD TOPO. MAX_FINAL_CANDIDATES is the real output cap.
+MAX_PER_DOMAIN = 6
 
 CHAT_JSON_ATTEMPTS = 2  # a JSON-mode call that comes back unparseable gets one retry
 

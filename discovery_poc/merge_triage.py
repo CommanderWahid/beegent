@@ -61,6 +61,9 @@ def dedupe(candidates: list[Candidate]) -> list[Candidate]:
     for cand in best.values():
         domain = _domain(cand.url)
         if per_domain.get(domain, 0) >= config.MAX_PER_DOMAIN:
+            print(
+                f"    [dedupe] drop (domain cap {config.MAX_PER_DOMAIN} for {domain}) {cand.url}"
+            )
             continue
         per_domain[domain] = per_domain.get(domain, 0) + 1
         kept.append(cand)
