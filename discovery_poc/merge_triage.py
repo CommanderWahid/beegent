@@ -14,21 +14,48 @@ from schemas import Candidate
 TRIAGE_SYSTEM = """You judge whether a URL is a usable geospatial DATA SOURCE for a
 specific request - not merely a page that mentions the topic.
 
-Answer true only if the page is (or directly serves) a dataset, download, API or data
-catalog entry that plausibly covers the requested country and use case.
-Answer false for blog posts, news, tutorials, product marketing, generic homepages,
+Set is_data_source true only if the page is (or directly serves) a dataset, download,
+API or data catalog entry that plausibly covers the requested country and use case.
+Set it false for blog posts, news, tutorials, product marketing, generic homepages,
 social media, forums and Q&A threads, encyclopedia articles, search-engine result pages,
 and for data that is about something else entirely.
 
+confidence answers a DIFFERENT question from is_data_source. It is not how sure you are
+of the true/false call - it is how DIRECTLY this resource serves the requested country
+and use case. Score it against these bands:
+
+  0.9-1.0  a specific named dataset, download or API that matches both the country and
+           the use case, with no reservations
+  0.7-0.8  a real dataset page, but broader or adjacent - a national theme layer that
+           contains what was asked for, a superset, or one region of the country
+  0.5-0.6  a catalog or portal entry that probably leads to the data but is not the data
+           itself; or the coverage is plausible but you cannot verify it
+  0.1-0.4  mentions the topic but is not itself a data source (set is_data_source false)
+
+The URL itself is your main evidence for which band applies, because you are judging
+from the URL and title alone - not from the page content. Read its path:
+
+  https://site.gov/                     bare domain, no path -> a site root. At most 0.6.
+  https://site.gov/datasets             a listing of many datasets -> at most 0.6, it is
+                                        an index, not a dataset
+  https://site.gov/datasets/parcels-2024   a path segment naming one specific dataset
+                                        -> this is the 0.9-1.0 shape
+
+A good site does not lift its own front page into a high band: the front page of the
+best cadastral portal in the country is still a front page, and scores lower than the
+single dataset page it links to. Reserve 1.0 for an exact, named, directly downloadable
+match with no reservations. If you would give every URL the same score, you are not
+making the judgement: the whole point is to separate the exact matches from the merely
+relevant.
+
 Also name the organization or entity that PUBLISHES the data - the body behind the
 resource, not the site hosting it. Two datasets on one national portal published by two
-different agencies have different publishers. Be specific when you can ("INSEE", "IGN",
-"OpenStreetMap contributors"), generic when you cannot ("commercial GIS vendor",
-"data.gouv.fr open data platform"). Use "unknown" if you have no idea.
+different agencies have different publishers. Be specific when you can, generic when 
+you cannot. Use "unknown" if you have no idea.
 
-Reply with JSON only:
-{"is_data_source": true|false, "confidence": 0.0-1.0, "publisher": "<publishing org>",
- "rationale": "<one short sentence>"}"""
+Reply with JSON only, with the keys in exactly this order:
+{"assessment": "<one short sentence: what the page actually is, and how well it fits>",
+ "is_data_source": true|false, "publisher": "<publishing org>", "confidence": 0.0-1.0}"""
 
 
 def _normalize(url: str) -> str:
@@ -91,6 +118,29 @@ def prefilter(candidates: list[Candidate]) -> list[Candidate]:
             continue
         kept.append(cand)
     return kept
+
+
+def _report_spread(survivors: list[Candidate]) -> None:
+    """Log how much the triage scores actually discriminate.
+
+    The sort below is only meaningful if the scores differ. A model that answers 1.0
+    for everything turns it into a no-op and the final cut silently becomes "first N
+    found" instead of "best N" - which is exactly what llama3.1:8b used to do. Cheap
+    to print, and it makes the regression visible in the run log instead of only in a
+    diff of two output files.
+    """
+    scores = [c.confidence for c in survivors if c.confidence is not None]
+    if not scores:
+        return
+    print(
+        f"    [triage] confidence spread {min(scores):.2f}-{max(scores):.2f} "
+        f"across {len(scores)} survivor(s)"
+    )
+    if len(set(scores)) == 1 and len(scores) > 1:
+        print(
+            f"    [triage] WARNING: all {len(scores)} survivors share confidence "
+            f"{scores[0]:.2f} - ranking is insertion order, not quality"
+        )
 
 
 def triage(
@@ -157,11 +207,15 @@ def triage(
         if verdict == "keep":
             cand.confidence = confidence
             cand.publisher = publisher
-            if data.get("rationale"):
-                cand.rationale = str(data["rationale"])
+            # `assessment` is the current key; `rationale` is accepted so a model that
+            # keeps emitting the old name still gives us a sentence.
+            note = data.get("assessment") or data.get("rationale")
+            if note:
+                cand.rationale = str(note)
             survivors.append(cand)
 
     survivors.sort(key=lambda c: c.confidence or 0.0, reverse=True)
+    _report_spread(survivors)
     return survivors[: config.MAX_FINAL_CANDIDATES], unresolved
 
 

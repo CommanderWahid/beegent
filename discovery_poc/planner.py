@@ -10,11 +10,10 @@ Given a country and a use case, produce a list of distinct SEARCH ANGLES - diffe
 routes someone would take to find suitable data. Angles must not overlap: each one
 should target a different kind of publisher or a different framing of the data.
 
-For geospatial data the authoritative producer is usually the country's national mapping,
-cadastral or geographic institute (e.g. IGN in France, Ordnance Survey in the UK, USGS in
-the US). Unless the use case clearly calls for something else, one angle must name that
-specific body for this country - not a generic "government data" angle, and not the
-national statistics office, which publishes statistics rather than base geometry.
+The authoritative producer is usually the country's national mapping, cadastral or geographic institute. 
+Unless the use case clearly calls for something else, one angle must name that specific body for this 
+country - not a generic "government data" angle, and not the national statistics office, which publishes 
+statistics rather than base geometry.
 
 Name concrete organizations wherever you can. An angle that names a publisher beats an
 angle that names a category.
