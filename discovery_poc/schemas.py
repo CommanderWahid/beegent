@@ -50,6 +50,10 @@ class DiscoveryRun:
     iteration: int = 1  # bumps each time the critic sends it back to the planner
     max_iterations: int = 2  # hard cap - after this, stop re-planning and flag for human
     candidates: list[Candidate] = field(default_factory=list)
+    # Found, but triage never produced a verdict on them (null confidence is the marker).
+    # Excluded from candidates so junk can't ride in on a failed call, recorded here so
+    # nothing that was found disappears silently.
+    unresolved: list[Candidate] = field(default_factory=list)
     status: str = "ok"  # "ok" | "needs_human_review"
     reason: str | None = None  # populated when status is needs_human_review
 

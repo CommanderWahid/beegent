@@ -32,18 +32,7 @@ def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
 client = get_llm_client()
 
 
-def chat_json(model: str, messages: list[dict]) -> dict | None:
-    """One JSON-mode completion. Returns None if the model didn't produce JSON.
-
-    POC shortcut: callers fall back to a deterministic default rather than retry.
-    """
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-    raw = resp.choices[0].message.content or ""
+def _parse_json(raw: str) -> dict | None:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -54,8 +43,35 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
                 return json.loads(raw[start : end + 1])
             except json.JSONDecodeError:
                 pass
-        print(f"  [llm] {model} returned non-JSON: {raw[:120]!r}")
-        return None
+    return None
+
+
+def chat_json(model: str, messages: list[dict]) -> dict | None:
+    """One JSON-mode completion, retried once. Returns None if no attempt produced JSON.
+
+    Empty completions do happen - a thinking model under GPU pressure can return nothing
+    at all. Observed failures were transient (the same call replayed fine), so a retry
+    usually clears them. The retry nudges temperature off 0 because temp-0 replays are
+    byte-identical, which would just reproduce a deterministically-bad completion.
+
+    Callers must treat None as "no answer", never as a negative answer.
+    """
+    for attempt in range(config.CHAT_JSON_ATTEMPTS):
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            response_format={"type": "json_object"},
+            temperature=0 if attempt == 0 else 0.3,
+        )
+        raw = resp.choices[0].message.content or ""
+        parsed = _parse_json(raw)
+        if parsed is not None:
+            return parsed
+        print(
+            f"  [llm] {model} returned non-JSON "
+            f"(attempt {attempt + 1}/{config.CHAT_JSON_ATTEMPTS}): {raw[:120]!r}"
+        )
+    return None
 
 
 def chat_tools(model: str, messages: list[dict], tools: list[dict]):

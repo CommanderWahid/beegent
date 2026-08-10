@@ -44,9 +44,14 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         # win any dedupe collision and never be squeezed out by the per-domain cap.
         # A re-plan must add to the pool, not restart it - otherwise a good hit from
         # iteration 1 silently vanishes because iteration 2 didn't happen to re-find it.
-        raw = carried + list(catalog_hits)
-        if carried:
-            print(f"[carry] {len(carried)} candidate(s) carried over from iteration {iteration - 1}")
+        # Unresolved ones ride along too: their confidence is None, so a re-plan gives
+        # them the real triage call they never got.
+        raw = carried + list(run.unresolved) + list(catalog_hits)
+        if carried or run.unresolved:
+            print(
+                f"[carry] {len(carried)} carried + {len(run.unresolved)} unresolved "
+                f"from iteration {iteration - 1}"
+            )
         for i, angle in enumerate(angles, 1):
             print(f"[explore] angle {i}/{len(angles)}: {angle.description}")
             try:
@@ -57,10 +62,10 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
             print(f"    [explore] {len(found)} candidate(s)")
             raw.extend(found)
 
-        run.candidates = merge_and_triage(country, use_case, raw)
+        run.candidates, run.unresolved = merge_and_triage(country, use_case, raw)
         carried = list(run.candidates)
 
-        escalate, gate_reason = needs_escalation(run.candidates)
+        escalate, gate_reason = needs_escalation(run.candidates, run.unresolved)
         if not escalate:
             run.status = "ok"
             run.reason = None
@@ -111,6 +116,10 @@ def main() -> None:
     print(f"status:     {run.status}")
     print(f"iterations: {run.iteration}/{run.max_iterations}")
     print(f"candidates: {len(run.candidates)}")
+    if run.unresolved:
+        print(f"unresolved: {len(run.unresolved)} (triage gave no verdict - see JSON)")
+        for cand in run.unresolved:
+            print(f"            {cand.url}")
     if run.candidates:
         top = run.candidates[0]
         print(f"top pick:   {top.title}\n            {top.url} [{top.source}]")

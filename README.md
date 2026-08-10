@@ -48,10 +48,20 @@ social media, forums, wikis and search-result pages is triage's job, named in it
 rather than matched against hosts nobody would maintain. Trade-off: office documents
 (`.docx`, `.pptx`) and social URLs now cost one cheap triage call each instead of being free.
 
+**Triage has three outcomes, not two.** Yes, no, and *no answer*. An LLM call that comes back
+empty or unparseable is retried once (`CHAT_JSON_ATTEMPTS`); if it still produces no verdict,
+the candidate is **excluded from `candidates`** — so junk can never ride in on a failed call —
+and recorded in an `unresolved` array in the output, with `confidence: null` as the marker that
+nothing judged it. Coercing a non-answer into a "no" silently deleted the best France candidate
+once; coercing it into a "yes" would admit junk. Neither is acceptable, so it stays its own
+outcome. If unresolved candidates outnumber survivors, the gate escalates rather than reporting
+a confident `ok`.
+
 **Re-planning adds to the candidate pool, it does not restart it.** Survivors from earlier
 iterations are unioned into the next iteration's raw pool, win dedupe collisions, and skip
-re-triage (they already passed). A candidate that passed triage once never has to be
-re-found to reach the final output.
+re-triage (they already passed). Unresolved candidates ride along too and *do* get re-triaged,
+since they never got a verdict. A candidate that passed triage once never has to be re-found to
+reach the final output.
 
 | File | Role |
 |---|---|

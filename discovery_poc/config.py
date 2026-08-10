@@ -18,7 +18,12 @@ LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 # Swap these if you pull something that fits (e.g. qwen3:8b).
 PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "deepseek-r1:14b")
 SEARCH_EXPLORE_MODEL = os.environ.get("SEARCH_EXPLORE_MODEL", "qwen3:8b")
-TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "qwen3:4b")  # small/cheap - once per candidate
+# Triage runs once per candidate and answers a binary question, so reliability beats depth.
+# Measured: llama3.1:8b ~2.7s per verdict with no reasoning phase and no empty completions
+# across 18 calls, vs qwen3:4b spending ~12,800 chars of reasoning per yes/no and occasionally
+# returning empty content under GPU pressure. Trade-off: the weaker model also makes the
+# publisher guess that feeds the escalation gate's diversity check.
+TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "llama3.1:8b")  # small/cheap - once per candidate
 CRITIC_MODEL = os.environ.get("CRITIC_MODEL", "deepseek-r1:14b")  # rare calls, highest stakes
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -42,6 +47,8 @@ SINGLE_PUBLISHER_MIN_CANDIDATES = 3
 MAX_FINAL_CANDIDATES = 6
 TRIAGE_CONFIDENCE_FLOOR = 0.5
 MAX_PER_DOMAIN = 3  # so one site can't flood the candidate list
+
+CHAT_JSON_ATTEMPTS = 2  # a JSON-mode call that comes back unparseable gets one retry
 
 HTTP_TIMEOUT = 20
 LLM_TIMEOUT = 180

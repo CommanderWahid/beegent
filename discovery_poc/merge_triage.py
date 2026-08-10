@@ -90,9 +90,18 @@ def prefilter(candidates: list[Candidate]) -> list[Candidate]:
     return kept
 
 
-def triage(country: str, use_case: str, candidates: list[Candidate]) -> list[Candidate]:
-    """One cheap TRIAGE_MODEL call per candidate: real data endpoint vs. noise."""
-    survivors = []
+def triage(
+    country: str, use_case: str, candidates: list[Candidate]
+) -> tuple[list[Candidate], list[Candidate]]:
+    """One cheap TRIAGE_MODEL call per candidate. Returns (survivors, unresolved).
+
+    Three outcomes, not two. A call that comes back with no parseable verdict is NOT a
+    negative verdict - coercing it into one silently deleted the best France candidate.
+    Such candidates are excluded from the results (so junk can never ride in on a failed
+    call) but handed back as `unresolved` so nothing vanishes without a trace.
+    """
+    survivors: list[Candidate] = []
+    unresolved: list[Candidate] = []
     for cand in candidates:
         if cand.confidence is not None:
             # Carried over from an earlier iteration - it already passed triage, so
@@ -115,7 +124,17 @@ def triage(country: str, use_case: str, candidates: list[Candidate]) -> list[Can
                     ),
                 },
             ],
-        ) or {}
+        )
+
+        if data is None or "is_data_source" not in data:
+            # No answer - not a "no". Keep it out of the results, but hand it back.
+            cand.rationale = (
+                "triage returned no parseable verdict after "
+                f"{config.CHAT_JSON_ATTEMPTS} attempts"
+            )
+            print(f"    [triage] unresolved (no verdict) {cand.url}")
+            unresolved.append(cand)
+            continue
 
         is_data = bool(data.get("is_data_source"))
         try:
@@ -140,13 +159,18 @@ def triage(country: str, use_case: str, candidates: list[Candidate]) -> list[Can
             survivors.append(cand)
 
     survivors.sort(key=lambda c: c.confidence or 0.0, reverse=True)
-    return survivors[: config.MAX_FINAL_CANDIDATES]
+    return survivors[: config.MAX_FINAL_CANDIDATES], unresolved
 
 
-def merge_and_triage(country: str, use_case: str, raw: list[Candidate]) -> list[Candidate]:
+def merge_and_triage(
+    country: str, use_case: str, raw: list[Candidate]
+) -> tuple[list[Candidate], list[Candidate]]:
     deduped = dedupe(raw)
     filtered = prefilter(deduped)
     print(f"  [merge] {len(raw)} raw -> {len(deduped)} deduped -> {len(filtered)} after prefilter")
-    survivors = triage(country, use_case, filtered)
-    print(f"  [triage] {len(filtered)} -> {len(survivors)} survived")
-    return survivors
+    survivors, unresolved = triage(country, use_case, filtered)
+    print(
+        f"  [triage] {len(filtered)} -> {len(survivors)} survived, "
+        f"{len(unresolved)} unresolved"
+    )
+    return survivors, unresolved

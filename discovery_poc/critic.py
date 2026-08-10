@@ -19,7 +19,9 @@ Reply with JSON only:
 {"decision": "replan" | "needs_human_review", "note": "<one sentence>"}"""
 
 
-def needs_escalation(candidates: list[Candidate]) -> tuple[bool, str]:
+def needs_escalation(
+    candidates: list[Candidate], unresolved: list[Candidate] = ()
+) -> tuple[bool, str]:
     """Deterministic threshold check - cheap, no model call.
 
     Diversity is measured on the PUBLISHER triage guessed, not on Candidate.source
@@ -36,6 +38,13 @@ def needs_escalation(candidates: list[Candidate]) -> tuple[bool, str]:
     """
     if len(candidates) < config.MIN_CANDIDATES:
         return True, f"only {len(candidates)} candidate(s) survived triage"
+
+    # A run that failed to judge most of what it found has not earned a confident "ok".
+    if len(unresolved) > len(candidates):
+        return True, (
+            f"triage could not judge {len(unresolved)} of "
+            f"{len(unresolved) + len(candidates)} candidates"
+        )
 
     publishers = {c.publisher_key() for c in candidates}
     if len(publishers) == 1 and len(candidates) < config.SINGLE_PUBLISHER_MIN_CANDIDATES:
