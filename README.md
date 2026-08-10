@@ -25,7 +25,7 @@ Writes `candidate_list.json` and prints a summary. Requires Ollama running local
   -> planner            1..5 distinct search angles (count is the model's call)   [LLM]
   -> catalog workers    HDX CKAN + geoBoundaries, runs once                       [no LLM]
   -> search & explore   one agent per angle: 1 web search + up to 3 page fetches  [LLM + tools]
-  -> merge & triage     dedupe -> deterministic prefilter -> yes/no + publisher    [LLM]
+  -> merge & triage     dedupe -> MIME prefilter -> yes/no + publisher            [LLM]
   -> escalation gate    <2 survivors, or thin AND single-publisher                [no LLM]
   -> critic             replan (max 2 attempts) or needs_human_review             [LLM, rare]
 ```
@@ -40,6 +40,13 @@ empty for use cases HDX doesn't cover), and raw domain would flag one national p
 hosting several agencies' datasets as undiverse. A single publisher only counts as failure
 when the result is *also* thin (`SINGLE_PUBLISHER_MIN_CANDIDATES`): several distinct
 high-confidence datasets from one good publisher is a fine outcome.
+
+**The pre-filter keeps no lists.** It drops candidates whose MIME family (via stdlib
+`mimetypes`) is image/video/audio or PDF — cases where a model call is obviously wasted —
+and keeps everything else, including unknown types. There is no domain blocklist: judging
+social media, forums, wikis and search-result pages is triage's job, named in its prompt
+rather than matched against hosts nobody would maintain. Trade-off: office documents
+(`.docx`, `.pptx`) and social URLs now cost one cheap triage call each instead of being free.
 
 **Re-planning adds to the candidate pool, it does not restart it.** Survivors from earlier
 iterations are unioned into the next iteration's raw pool, win dedupe collisions, and skip

@@ -4,30 +4,12 @@ Two layers, cheap first - the deterministic pre-filter costs nothing and kills t
 easy junk before any model call.
 """
 
+import mimetypes
 from urllib.parse import urlparse
 
 import config
 from llm import chat_json
 from schemas import Candidate
-
-BLOCKED_DOMAINS = {
-    "facebook.com",
-    "x.com",
-    "twitter.com",
-    "instagram.com",
-    "pinterest.com",
-    "youtube.com",
-    "linkedin.com",
-    "tiktok.com",
-    "quora.com",
-    "reddit.com",
-    "wikipedia.org",
-    "duckduckgo.com",
-    "google.com",
-    "bing.com",
-}
-
-BLOCKED_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".doc", ".docx", ".ppt", ".pptx")
 
 TRIAGE_SYSTEM = """You judge whether a URL is a usable geospatial DATA SOURCE for a
 specific request - not merely a page that mentions the topic.
@@ -35,6 +17,7 @@ specific request - not merely a page that mentions the topic.
 Answer true only if the page is (or directly serves) a dataset, download, API or data
 catalog entry that plausibly covers the requested country and use case.
 Answer false for blog posts, news, tutorials, product marketing, generic homepages,
+social media, forums and Q&A threads, encyclopedia articles, search-engine result pages,
 and for data that is about something else entirely.
 
 Also name the organization or entity that PUBLISHES the data - the body behind the
@@ -85,13 +68,23 @@ def dedupe(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def prefilter(candidates: list[Candidate]) -> list[Candidate]:
-    """Deterministic junk drop - no model calls."""
+    """Drop non-data media by MIME family - no model calls, no maintained lists.
+
+    mimetypes is the stdlib mapping, so new formats arrive with Python rather than
+    with us. Data formats (.zip, .geojson, .csv) classify as data and survive - the
+    Kenya run's top pick was a .zip, so getting that wrong would throw away the best
+    candidate.
+
+    Unknown types are kept on purpose: triage is the judge, this layer only skips
+    the cases where a model call is obviously wasted. Everything the old domain
+    blocklist covered (social, forums, wikis, search-result pages) is now named in
+    TRIAGE_SYSTEM instead of matched against a host list nobody would maintain.
+    """
     kept = []
     for cand in candidates:
-        domain = _domain(cand.url)
-        if any(domain == b or domain.endswith("." + b) for b in BLOCKED_DOMAINS):
-            continue
-        if urlparse(cand.url).path.lower().endswith(BLOCKED_EXTENSIONS):
+        mime = mimetypes.guess_type(cand.url)[0] or ""
+        if mime.split("/")[0] in ("image", "video", "audio") or mime == "application/pdf":
+            print(f"    [prefilter] drop ({mime}) {cand.url}")
             continue
         kept.append(cand)
     return kept
