@@ -1,8 +1,8 @@
-<div align="center">
-  <img src="https://raw.githubusercontent.com/CommanderWahid/beegent/main/assets/beegent_logo.svg" width="72" height="72" alt="Beegent logo">
-  <h1>Beegent</h1>
-  <h3>The open-source multi-agent system for geospatial data source discovery.</h3>
-</div>
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/CommanderWahid/beegent/main/assets/beegent_logo.svg" width="40" height="40" align="middle" alt="Beegent logo">
+  Beegent
+</h1>
+<p align="center"><strong>The open-source multi-agent system for geospatial data source discovery.</strong></p>
 
 Beegent is an open-source **multi-agent discovery system** that automates the
 technical-scoping bottleneck in geospatial data ingestion: a planner, catalog
