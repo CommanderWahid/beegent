@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="assets/beegent_logo.svg" alt="" height="38" valign="middle" /> Beegent
+# <img src="assets/beegent_logo.svg" alt="" height="60" valign="middle" /> Beegent
 
 ### The open-source multi-agent system for geospatial data source discovery.
 
