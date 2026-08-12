@@ -7,4 +7,5 @@ dependencies = [
     "openai>=1.40",
     "requests>=2.31",
     "beautifulsoup4>=4.12",
+    "python-dotenv>=1.0",
 ]

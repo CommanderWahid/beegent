@@ -6,16 +6,38 @@ names anywhere else in the codebase, so one file tells you what ran.
 
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()  # picks up DATABRICKS_HOST / DATABRICKS_TOKEN etc. from a .env at repo root,
+# without overriding anything already set in the real environment
+
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 
 # Model name is backend-specific: an Ollama model tag when LLM_BACKEND=ollama,
-# or a Databricks serving-endpoint name when LLM_BACKEND=databricks.
-#
-# Local setup (RTX 4070 Laptop, 8GB)
-PLANNER_MODEL = os.environ.get("PLANNER_MODEL", "deepseek-r1:14b")
-SEARCH_EXPLORE_MODEL = os.environ.get("SEARCH_EXPLORE_MODEL", "qwen3:8b")
-TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "llama3.1:8b")  # small/cheap - once per candidate
-CRITIC_MODEL = os.environ.get("CRITIC_MODEL", "deepseek-r1:14b")  # rare calls, highest stakes
+# or a Databricks serving-endpoint name when LLM_BACKEND=databricks. Defaults below are
+# picked per backend so flipping LLM_BACKEND alone is enough - no per-model env vars
+# required unless you want to override one.
+_DEFAULT_MODELS = {
+    "ollama": {  # Local setup (RTX 4070 Laptop, 8GB)
+        "PLANNER_MODEL": "deepseek-r1:14b",
+        "SEARCH_EXPLORE_MODEL": "qwen3:8b",
+        "TRIAGE_MODEL": "llama3.1:8b",
+        "CRITIC_MODEL": "deepseek-r1:14b",
+    },
+    "databricks": {  # serving-endpoint names, not bare model names - verify with
+        # `GET /api/2.0/serving-endpoints` if these ever 404 in your workspace
+        "PLANNER_MODEL": "databricks-claude-sonnet-4-6",
+        "SEARCH_EXPLORE_MODEL": "databricks-claude-haiku-4-5",
+        "TRIAGE_MODEL": "databricks-claude-haiku-4-5",
+        "CRITIC_MODEL": "databricks-claude-opus-5",
+    },
+}
+_defaults = _DEFAULT_MODELS.get(LLM_BACKEND, _DEFAULT_MODELS["ollama"])
+
+PLANNER_MODEL = os.environ.get("PLANNER_MODEL", _defaults["PLANNER_MODEL"])
+SEARCH_EXPLORE_MODEL = os.environ.get("SEARCH_EXPLORE_MODEL", _defaults["SEARCH_EXPLORE_MODEL"])
+TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", _defaults["TRIAGE_MODEL"])  # small/cheap - once per candidate
+CRITIC_MODEL = os.environ.get("CRITIC_MODEL", _defaults["CRITIC_MODEL"])  # rare calls, highest stakes
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 

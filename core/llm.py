@@ -20,9 +20,13 @@ def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
             timeout=config.LLM_TIMEOUT,
         )
     if backend == "databricks":
+        # DATABRICKS_HOST may be a bare hostname or the full https://...  URL as shown in
+        # the Databricks UI - accept either instead of silently building a malformed,
+        # unresolvable base_url out of a pasted-in scheme/trailing slash.
+        host = config.DATABRICKS_HOST.removeprefix("https://").removeprefix("http://").rstrip("/")
         # TODO: PAT for now; move to OAuth machine-to-machine before production.
         return OpenAI(
-            base_url=f"https://{config.DATABRICKS_HOST}/serving-endpoints",
+            base_url=f"https://{host}/serving-endpoints",
             api_key=config.DATABRICKS_TOKEN,
             timeout=config.LLM_TIMEOUT,
         )
@@ -54,14 +58,20 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
     usually clears them. The retry nudges temperature off 0 because temp-0 replays are
     byte-identical, which would just reproduce a deterministically-bad completion.
 
+    response_format={"type": "json_object"} is Ollama-only: Databricks' Claude serving
+    endpoints 400 on it (INVALID_PARAMETER_VALUE). Every prompt already asks for JSON-only
+    output, and _parse_json() below already falls back to extracting the outermost {...}
+    from a prose/fenced reply, so skipping the param for Databricks costs nothing.
+
     Callers must treat None as "no answer", never as a negative answer.
     """
+    kwargs = {"response_format": {"type": "json_object"}} if config.LLM_BACKEND == "ollama" else {}
     for attempt in range(config.CHAT_JSON_ATTEMPTS):
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
-            response_format={"type": "json_object"},
             temperature=0 if attempt == 0 else 0.3,
+            **kwargs,
         )
         raw = resp.choices[0].message.content or ""
         parsed = _parse_json(raw)
