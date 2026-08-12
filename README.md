@@ -1,6 +1,12 @@
-![Scoutbee, an investigator bee mascot](assets/scoutbee_investigator.svg)
+<div align="center">
+
+<img src="assets/scoutbee_investigator.svg" alt="Beegent" width="120" />
 
 # Discovery-phase POC
+
+**Turns a `(country, use_case)` pair into a short, deduplicated list of candidate geospatial data-source URLs.**
+
+</div>
 
 Proof-of-concept for the **discovery step** of a geospatial data-scoping agent: turns a
 `(country, use_case)` pair into a short, deduplicated list of candidate data-source URLs,
