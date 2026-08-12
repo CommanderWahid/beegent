@@ -1,0 +1,43 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Beegent</title>
+<desc>A bee mascot wearing a deerstalker cap and holding a magnifying glass with a tiny location pin inside its lens, styled as a detective investigating geospatial data.</desc>
+<defs>
+<clipPath id="bodyClip"><ellipse cx="185" cy="240" rx="78" ry="95"/></clipPath>
+</defs>
+<g transform="scale(2.56)">
+
+<g transform="rotate(-20 113 185)"><ellipse cx="113" cy="185" rx="54" ry="30" fill="#CFE8F7" opacity="0.9"/></g>
+<g transform="rotate(20 257 185)"><ellipse cx="257" cy="185" rx="54" ry="30" fill="#CFE8F7" opacity="0.9"/></g>
+
+<ellipse cx="185" cy="240" rx="78" ry="95" fill="#F2A623"/>
+<g clip-path="url(#bodyClip)">
+  <rect x="107" y="205" width="156" height="22" rx="11" fill="#2A211B"/>
+  <rect x="107" y="243" width="156" height="22" rx="11" fill="#2A211B"/>
+  <rect x="107" y="281" width="156" height="22" rx="11" fill="#2A211B"/>
+</g>
+
+<polygon points="170,325 200,325 185,350" fill="#2A211B"/>
+
+<path d="M155,105 Q140,75 130,60" stroke="#2A211B" stroke-width="4" fill="none" stroke-linecap="round"/>
+<circle cx="130" cy="60" r="5" fill="#2A211B"/>
+<path d="M215,105 Q230,75 240,60" stroke="#2A211B" stroke-width="4" fill="none" stroke-linecap="round"/>
+<circle cx="240" cy="60" r="5" fill="#2A211B"/>
+
+<circle cx="185" cy="140" r="42" fill="#2A211B"/>
+<circle cx="167" cy="135" r="9" fill="#FFFFFF"/>
+<circle cx="203" cy="135" r="9" fill="#FFFFFF"/>
+<circle cx="169" cy="136" r="4" fill="#2A211B"/>
+<circle cx="201" cy="136" r="4" fill="#2A211B"/>
+
+<ellipse cx="185" cy="100" rx="46" ry="30" fill="#8B6F47"/>
+<ellipse cx="185" cy="124" rx="42" ry="9" fill="#6B5236"/>
+<g transform="rotate(-25 173 80)"><ellipse cx="173" cy="80" rx="12" ry="7" fill="#6B5236"/></g>
+<g transform="rotate(25 197 80)"><ellipse cx="197" cy="80" rx="12" ry="7" fill="#6B5236"/></g>
+<circle cx="185" cy="80" r="6" fill="#4A3826"/>
+
+<line x1="317" y1="322" x2="340" y2="345" stroke="#2A211B" stroke-width="7" stroke-linecap="round"/>
+<circle cx="295" cy="300" r="30" fill="#FFFFFF" stroke="#2A211B" stroke-width="6"/>
+<circle cx="295" cy="293" r="7" fill="#F2A623"/>
+<polygon points="290,298 300,298 295,311" fill="#F2A623"/>
+</g>
+</svg>
