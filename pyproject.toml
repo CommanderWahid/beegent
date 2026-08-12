@@ -1,0 +1,10 @@
+[project]
+name = "discovery-poc"
+version = "0.1.0"
+description = "Proof-of-concept for the discovery phase of a geospatial data-scoping agent"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.40",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+]
