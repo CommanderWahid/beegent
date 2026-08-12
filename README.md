@@ -1,3 +1,5 @@
+![Scoutbee, an investigator bee mascot](assets/scoutbee_investigator.svg)
+
 # Discovery-phase POC
 
 Proof-of-concept for the **discovery step** of a geospatial data-scoping agent: turns a
