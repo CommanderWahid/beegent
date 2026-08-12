@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/beegent_logo.png" width="72" height="72" alt="Beegent logo">
+  <img src="https://raw.githubusercontent.com/commanderwahid/beegent/assets/beegent_logo.svg" width="72" height="72" alt="Beegent logo">
   <h1>Beegent</h1>
   <h3>The open-source multi-agent system for geospatial data source discovery.</h3>
 </div>
