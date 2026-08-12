@@ -24,7 +24,7 @@ DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
 
 # --- pipeline tunables -------------------------------------------------------
 
-MAX_ANGLES = 5  # cap on planner output, for cost control
+MAX_ANGLES = 10  # cap on planner output, for cost control
 MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 
 MAX_SEARCHES_PER_ANGLE = 1
