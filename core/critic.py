@@ -15,6 +15,11 @@ Exactly two decisions are available:
 
 Do not choose "replan" just to try again; only if you can name a genuinely different route.
 
+Each candidate lists whether a fetchable resource endpoint was identified for it. When the run
+failed because nothing was fetchable, a good replan names routes that lead to actual downloads
+or APIs - a data portal's export/API endpoints, a WFS/WMS service, a direct file release - rather
+than more pages about the data.
+
 Reply with JSON only:
 {"decision": "replan" | "needs_human_review", "note": "<one sentence>"}"""
 
@@ -38,6 +43,18 @@ def needs_escalation(
     """
     if len(candidates) < config.MIN_CANDIDATES:
         return True, f"only {len(candidates)} candidate(s) survived triage"
+
+    # Fetchability is not negotiable: a run can be diverse, plentiful and topically perfect and
+    # still be worthless if not one candidate has an endpoint you can actually pull data from.
+    #
+    # Under the default config this is an invariant rather than a live branch - triage caps
+    # resource_url-less candidates below TRIAGE_CONFIDENCE_FLOOR, so they never reach here. It
+    # is checked anyway because that reachability is an accident of two tunables: raise
+    # NO_RESOURCE_CONFIDENCE_CAP or lower the floor and this becomes the check that catches it.
+    if not any(c.resource_url for c in candidates):
+        return True, (
+            f"none of the {len(candidates)} candidate(s) have a fetchable resource endpoint"
+        )
 
     # A run that failed to judge most of what it found has not earned a confident "ok".
     if len(unresolved) > len(candidates):
@@ -65,7 +82,8 @@ def run_critic(
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
     found = (
         "\n".join(
-            f"- {c.url} [{c.source}, publisher: {c.publisher or 'unknown'}] {c.title}"
+            f"- {c.url} [{c.source}, publisher: {c.publisher or 'unknown'}, "
+            f"resource: {c.resource_url or 'none identified'}] {c.title}"
             for c in candidates
         )
         or "(nothing survived triage)"

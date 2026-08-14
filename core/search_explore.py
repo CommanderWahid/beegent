@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 
 import config
 from llm import chat_json, chat_tools, to_message_dict
+from resource_links import looks_like_resource
 from schemas import Candidate, SearchAngle
 
 SYSTEM = """You find real, downloadable geospatial data sources on the internet.
@@ -32,6 +33,11 @@ You have two tools:
 
 You may fetch at most {max_fetches} pages in total. Do not fetch a URL that already
 looks like a dataset/resource/download page - that is already what we want.
+
+Whenever you fetch a page, look in its links for the endpoint that actually serves the
+data: an export or download button, a direct file link (.geojson, .zip, .csv, .gpkg), or
+an API link (WFS/WMS, /api/, /rest/services). Note it - a page describing a dataset is
+worth much less than the link that hands you the dataset.
 When you have what you need, stop calling tools and say so."""
 
 FINAL = """List the data sources you found for this angle.
@@ -40,8 +46,15 @@ Only include URLs you actually saw in tool results. Prefer dataset/download/API 
 over homepages. Include nothing you are not reasonably confident is a data source.
 It is fine to return an empty list.
 
+For each one, set resource_url to the link that actually serves the data - a direct file
+download or an API endpoint you saw in a tool result. If you did not see one, set it to
+null. Do not repeat the page url there and do not construct a plausible-looking endpoint:
+null is the correct, useful answer when no download or API link was found.
+
 Reply with JSON only:
-{"candidates": [{"url": "...", "title": "...", "rationale": "<one sentence: what data is there>"}]}"""
+{"candidates": [{"url": "...", "title": "...",
+                 "resource_url": "<direct download or API endpoint, or null>",
+                 "rationale": "<one sentence: what data is there>"}]}"""
 
 TOOLS = [
     {
@@ -114,6 +127,29 @@ def fetch_page(url: str, max_chars: int = 3000, max_links: int = 30) -> dict:
         if len(links) >= max_links:
             break
     return {"url": url, "text": text, "links": links}
+
+
+def _reported_resource_url(raw: dict, url: str, seen: dict[str, int]) -> str | None:
+    """The endpoint the model reported, if it is allowed to count. No network.
+
+    Held to the same standard as `url`: it must have actually turned up in a tool result
+    (`seen` holds every search hit and every link off a fetched page). A model that invents a
+    plausible-looking /api/ path would otherwise launder a landing page into a high-confidence
+    candidate, which is the exact failure this field exists to catch.
+
+    Only the cheap, local half of the job lives here, because `seen` exists nowhere else.
+    Candidates left at None are picked up by merge_triage.resolve_resources(), which probes.
+    """
+    reported = raw.get("resource_url")
+    if not isinstance(reported, str) or not reported.startswith("http"):
+        return None
+    # Echoing the page back is only meaningful if the page is itself an endpoint.
+    if reported == url and not looks_like_resource(url):
+        return None
+    if reported not in seen:
+        print(f"    [resource] discarding unseen resource_url from model: {reported}")
+        return None
+    return reported
 
 
 def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candidate]:
@@ -213,6 +249,7 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 source="search_explore",
                 hops=hops.get(url, 0),
                 rationale=raw.get("rationale", ""),
+                resource_url=_reported_resource_url(raw, url, hops),
             )
         )
 
@@ -227,6 +264,8 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 source="search_explore",
                 hops=0,
                 rationale="raw search hit (model returned no structured candidates)",
+                # No model verdict to work from; merge_triage.resolve_resources() will probe
+                # these like any other candidate.
             )
             for hit in search_hits[:5]
         ]

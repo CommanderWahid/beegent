@@ -59,6 +59,24 @@ MIN_CANDIDATES = 2  # escalation gate: fewer than this -> call the critic
 SINGLE_PUBLISHER_MIN_CANDIDATES = 3
 MAX_FINAL_CANDIDATES = 6
 TRIAGE_CONFIDENCE_FLOOR = 0.5
+# Ceiling for a candidate with no identified resource endpoint. Deliberately below
+# TRIAGE_CONFIDENCE_FLOOR: a page nobody could find a download or API for has not been shown
+# to serve data at all, so it is dropped rather than ranked low. Applied before the floor
+# comparison in merge_triage.triage(), and only ever downward.
+NO_RESOURCE_CONFIDENCE_CAP = 0.3
+
+# Resource resolution is the only stage that spends HTTP requests per candidate rather than
+# per angle, so it gets its own ceiling. Worst case is roughly two probes per deduped
+# candidate; results are memoized per process, so carried candidates cost nothing to recheck.
+# Observed ~56 probes for a 20-candidate run, so this needs real headroom: exhausting it makes
+# later candidates look unfetchable, which triage then caps and drops. resolve_resources()
+# warns when it runs out so that never happens silently.
+MAX_RESOURCE_PROBES = 150
+RESOURCE_PROBE_BYTES = 2048  # range size for the content-type check - enough to get headers back
+# A link-heavy page can offer dozens of resource-shaped URLs; probing them all would burn the
+# whole run's budget on one candidate. The extractor puts its best evidence first, so the
+# answer is in the first few or not there at all.
+MAX_RESOURCE_CANDIDATES_PER_PAGE = 5
 # So one site can't flood the list - but not so tight that a country whose open data is
 # concentrated on a single national portal loses its best datasets. data.gouv.fr hit the old
 # cap of 3 and would have discarded IGN's BD TOPO. MAX_FINAL_CANDIDATES is the real output cap.

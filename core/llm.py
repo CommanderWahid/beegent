@@ -7,7 +7,7 @@ Both supported backends speak the OpenAI wire format: Ollama exposes it at
 
 import json
 
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 
 import config
 
@@ -34,6 +34,44 @@ def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
 
 
 client = get_llm_client()
+
+
+def _create(model: str, messages: list[dict], **kwargs):
+    """One completion, retried without `temperature` if the endpoint refuses that parameter.
+
+    Databricks' Claude Opus endpoint 400s on temperature ("does not support the temperature
+    parameter") while its Sonnet and Haiku endpoints accept it. Asking and then dropping the
+    parameter beats keeping a per-model capability table in sync with a workspace's endpoints -
+    and a hard failure here would take out the critic, whose whole job is to rescue a weak run.
+    """
+    try:
+        return client.chat.completions.create(model=model, messages=messages, **kwargs)
+    except BadRequestError as exc:
+        if "temperature" not in kwargs or "temperature" not in str(exc):
+            raise
+        print(f"  [llm] {model} rejects the temperature parameter; retrying without it")
+        kwargs.pop("temperature")
+        return client.chat.completions.create(model=model, messages=messages, **kwargs)
+
+
+def _message_text(msg) -> str:
+    """Flatten an assistant message's content to text.
+
+    Most endpoints return a plain string, but Databricks' Claude Opus endpoint returns a list
+    of content blocks. Normalizing here keeps that shape from leaking into _parse_json() and
+    every caller downstream.
+    """
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        return "".join(parts)
+    return ""
 
 
 def _parse_json(raw: str) -> dict | None:
@@ -67,13 +105,13 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
     """
     kwargs = {"response_format": {"type": "json_object"}} if config.LLM_BACKEND == "ollama" else {}
     for attempt in range(config.CHAT_JSON_ATTEMPTS):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
+        resp = _create(
+            model,
+            messages,
             temperature=0 if attempt == 0 else 0.3,
             **kwargs,
         )
-        raw = resp.choices[0].message.content or ""
+        raw = _message_text(resp.choices[0].message)
         parsed = _parse_json(raw)
         if parsed is not None:
             return parsed
@@ -86,12 +124,7 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
 
 def chat_tools(model: str, messages: list[dict], tools: list[dict]):
     """One tool-calling completion. Returns the assistant message."""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        temperature=0,
-    )
+    resp = _create(model, messages, tools=tools, temperature=0)
     return resp.choices[0].message
 
 
@@ -101,7 +134,7 @@ def to_message_dict(msg) -> dict:
     Drops Ollama's non-standard `reasoning` field so thinking models stay
     swappable without touching the agents.
     """
-    out: dict = {"role": "assistant", "content": msg.content or ""}
+    out: dict = {"role": "assistant", "content": _message_text(msg)}
     if msg.tool_calls:
         out["tool_calls"] = [
             {

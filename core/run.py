@@ -116,6 +116,8 @@ def main() -> None:
     print(f"status:     {run.status}")
     print(f"iterations: {run.iteration}/{run.max_iterations}")
     print(f"candidates: {len(run.candidates)}")
+    fetchable = sum(1 for c in run.candidates if c.resource_url)
+    print(f"fetchable:  {fetchable}/{len(run.candidates)} with a resource endpoint")
     if run.unresolved:
         print(f"unresolved: {len(run.unresolved)} (triage gave no verdict - see JSON)")
         for cand in run.unresolved:
@@ -123,6 +125,7 @@ def main() -> None:
     if run.candidates:
         top = run.candidates[0]
         print(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
+        print(f"            resource: {top.resource_url or 'none identified'}")
     if run.reason:
         print(f"reason:     {run.reason}")
     print(f"written to: {args.out}")

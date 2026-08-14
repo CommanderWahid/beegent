@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import config
 from llm import chat_json
+from resource_links import budget_exhausted, probe_count, resolve_resource_url, serves_data
 from schemas import Candidate
 
 TRIAGE_SYSTEM = """You judge whether a URL is a usable geospatial DATA SOURCE for a
@@ -47,6 +48,11 @@ single dataset page it links to. Reserve 1.0 for an exact, named, directly downl
 match with no reservations. If you would give every URL the same score, you are not
 making the judgement: the whole point is to separate the exact matches from the merely
 relevant.
+
+You are also told whether a direct resource endpoint - an actual download link or API -
+was identified for this candidate. This outranks topical fit. A page with no identified
+endpoint has not been shown to serve data at all, no matter how well its title matches
+the request: score it at most 0.4. Being the right topic is not the same as being data.
 
 Also name the organization or entity that PUBLISHES the data - the body behind the
 resource, not the site hosting it. Two datasets on one national portal published by two
@@ -120,6 +126,38 @@ def prefilter(candidates: list[Candidate]) -> list[Candidate]:
     return kept
 
 
+def resolve_resources(candidates: list[Candidate]) -> None:
+    """Fill in (and sanity-check) each candidate's resource_url, in place.
+
+    Here rather than in the finders because this is the one place a candidate is seen exactly
+    once - deduped, prefiltered, and immediately before triage turns resource_url into a
+    confidence. Doing it per angle would re-probe the same URL for every angle that found it.
+
+    Already-set values get verified rather than trusted: a link really seen on a real page can
+    still be dead, and a URL that 404s is not a resource. Carried candidates are skipped
+    entirely - they passed triage in an earlier iteration and must not be re-judged here.
+    """
+    for cand in candidates:
+        if cand.confidence is not None:
+            continue
+        if cand.resource_url:
+            if serves_data(cand.resource_url):
+                continue
+            print(f"    [resource] reported endpoint does not serve data: {cand.resource_url}")
+            cand.resource_url = None
+        cand.resource_url = resolve_resource_url(cand.url)
+        if cand.resource_url:
+            print(f"    [resource] {cand.url}\n               -> {cand.resource_url}")
+
+    found = sum(1 for c in candidates if c.resource_url)
+    print(f"  [resource] {found}/{len(candidates)} resolved ({probe_count()} probes spent)")
+    if budget_exhausted():
+        print(
+            f"  [resource] WARNING: probe budget ({config.MAX_RESOURCE_PROBES}) exhausted - "
+            "candidates after this point look unfetchable and will be capped on that basis"
+        )
+
+
 def _report_spread(survivors: list[Candidate]) -> None:
     """Log how much the triage scores actually discriminate.
 
@@ -173,6 +211,7 @@ def triage(
                     "content": (
                         f"Country: {country}\nUse case: {use_case}\n"
                         f"URL: {cand.url}\nTitle: {cand.title}\n"
+                        f"Direct resource endpoint: {cand.resource_url or 'none identified'}\n"
                         f"What the finder said: {cand.rationale}"
                     ),
                 },
@@ -199,9 +238,19 @@ def triage(
         if publisher and publisher.lower() == "unknown":
             publisher = None
 
+        # Deterministic safety net, independent of what the model said. The prompt asks for
+        # the same thing, but a model that ignores it would otherwise put a landing page at
+        # the top of the list - which is the bug this whole field exists to fix. min() means
+        # this can only ever lower a score, never raise one. Applied before the floor
+        # comparison, so an unfetchable candidate is dropped rather than ranked last.
+        capped = cand.resource_url is None and confidence > config.NO_RESOURCE_CONFIDENCE_CAP
+        if capped:
+            confidence = min(confidence, config.NO_RESOURCE_CONFIDENCE_CAP)
+
         verdict = "keep" if is_data and confidence >= config.TRIAGE_CONFIDENCE_FLOOR else "drop"
         print(
-            f"    [triage] {verdict} (data={is_data} conf={confidence:.2f} "
+            f"    [triage] {verdict} (data={is_data} conf={confidence:.2f}"
+            f"{' CAPPED: no resource endpoint' if capped else ''} "
             f"publisher={publisher or '?'}) {cand.url}"
         )
         if verdict == "keep":
@@ -225,6 +274,7 @@ def merge_and_triage(
     deduped = dedupe(raw)
     filtered = prefilter(deduped)
     print(f"  [merge] {len(raw)} raw -> {len(deduped)} deduped -> {len(filtered)} after prefilter")
+    resolve_resources(filtered)
     survivors, unresolved = triage(country, use_case, filtered)
     print(
         f"  [triage] {len(filtered)} -> {len(survivors)} survived, "

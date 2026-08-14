@@ -21,6 +21,11 @@ class Candidate:
     rationale: str
     confidence: float | None = None  # filled in by triage
     publisher: str | None = None  # rough guess at the publishing org, filled in by triage
+    # The endpoint that actually serves the data - a direct download or an API. Distinct from
+    # `url`, which stays whatever page discovery found and cited. None means no fetchable
+    # endpoint could be identified; never guess one, because triage caps confidence on exactly
+    # this signal and a guess would launder a landing page into a real candidate.
+    resource_url: str | None = None
 
     def publisher_key(self) -> str:
         """Normalized publisher, for the gate's diversity check.
