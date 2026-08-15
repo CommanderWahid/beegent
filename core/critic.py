@@ -1,4 +1,6 @@
-"""Escalation gate (deterministic) + critic agent (one rare LLM call)."""
+"""
+Escalation gate (deterministic) + critic agent (one rare LLM call).
+"""
 
 import config
 from llm import chat_json
@@ -7,9 +9,8 @@ from schemas import Candidate, SearchAngle
 CRITIC_SYSTEM = """You review a failed-looking dataset discovery run and decide what happens next.
 
 Exactly two decisions are available:
-  "replan"             - there is a plausibly better angle nobody tried yet. Say concretely
-                         what to try instead (e.g. "try the national statistics office and
-                         the national geoportal instead of generic web search").
+  "replan"             - there is a plausibly better angle nobody tried yet. 
+                         Say concretely what to try instead.
   "needs_human_review" - the data probably does not exist in an open, findable form, or the
                          request is too vague/exotic to search for. Say why in one sentence.
 
@@ -27,17 +28,8 @@ Reply with JSON only:
 def needs_escalation(
     candidates: list[Candidate], unresolved: list[Candidate] = ()
 ) -> tuple[bool, str]:
-    """Deterministic threshold check - cheap, no model call.
-
-    Diversity is measured on the PUBLISHER triage guessed, not on Candidate.source
-    (the worker that found it) and not on the raw domain. Which worker found a
-    candidate says nothing about its quality - catalog workers coming up empty is
-    normal for use cases HDX simply doesn't cover - and raw domain would flag a
-    strong national portal hosting several agencies' datasets as undiverse.
-
-    A single publisher is only a failure signal when the result is ALSO thin: a
-    handful of distinct, high-confidence datasets from one good publisher is a
-    fine outcome and must not escalate on its own.
+    """
+    Deterministic threshold check - cheap, no model call.
 
     TODO: tune these numbers once we have run data.
     """
@@ -46,11 +38,6 @@ def needs_escalation(
 
     # Fetchability is not negotiable: a run can be diverse, plentiful and topically perfect and
     # still be worthless if not one candidate has an endpoint you can actually pull data from.
-    #
-    # Under the default config this is an invariant rather than a live branch - triage caps
-    # resource_url-less candidates below TRIAGE_CONFIDENCE_FLOOR, so they never reach here. It
-    # is checked anyway because that reachability is an accident of two tunables: raise
-    # NO_RESOURCE_CONFIDENCE_CAP or lower the floor and this becomes the check that catches it.
     if not any(c.resource_url for c in candidates):
         return True, (
             f"none of the {len(candidates)} candidate(s) have a fetchable resource endpoint"
@@ -79,6 +66,9 @@ def run_critic(
     candidates: list[Candidate],
     gate_reason: str,
 ) -> dict:
+    """
+    Run the critic LLM to decide what to do next.
+    """
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
     found = (
         "\n".join(

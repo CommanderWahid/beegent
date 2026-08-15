@@ -1,4 +1,5 @@
-"""Merge & triage: dedupe, drop obvious junk for free, then classify what survives.
+"""
+Merge & triage: dedupe, drop obvious junk for free, then classify what survives.
 
 Two layers, cheap first - the deterministic pre-filter costs nothing and kills the
 easy junk before any model call.
@@ -104,7 +105,8 @@ def dedupe(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def prefilter(candidates: list[Candidate]) -> list[Candidate]:
-    """Drop non-data media by MIME family - no model calls, no maintained lists.
+    """
+    Drop non-data media by MIME family - no model calls, no maintained lists.
 
     mimetypes is the stdlib mapping, so new formats arrive with Python rather than
     with us. Data formats (.zip, .geojson, .csv) classify as data and survive - the
@@ -127,7 +129,8 @@ def prefilter(candidates: list[Candidate]) -> list[Candidate]:
 
 
 def resolve_resources(candidates: list[Candidate]) -> None:
-    """Fill in (and sanity-check) each candidate's resource_url, in place.
+    """
+    Fill in (and sanity-check) each candidate's resource_url, in place.
 
     Here rather than in the finders because this is the one place a candidate is seen exactly
     once - deduped, prefiltered, and immediately before triage turns resource_url into a
@@ -159,7 +162,8 @@ def resolve_resources(candidates: list[Candidate]) -> None:
 
 
 def _report_spread(survivors: list[Candidate]) -> None:
-    """Log how much the triage scores actually discriminate.
+    """
+    Log how much the triage scores actually discriminate.
 
     The sort below is only meaningful if the scores differ. A model that answers 1.0
     for everything turns it into a no-op and the final cut silently becomes "first N
@@ -184,7 +188,8 @@ def _report_spread(survivors: list[Candidate]) -> None:
 def triage(
     country: str, use_case: str, candidates: list[Candidate]
 ) -> tuple[list[Candidate], list[Candidate]]:
-    """One cheap TRIAGE_MODEL call per candidate. Returns (survivors, unresolved).
+    """
+    One cheap TRIAGE_MODEL call per candidate. Returns (survivors, unresolved).
 
     Three outcomes, not two. A call that comes back with no parseable verdict is NOT a
     negative verdict - coercing it into one silently deleted the best France candidate.

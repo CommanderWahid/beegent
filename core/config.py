@@ -1,7 +1,5 @@
-"""Single source of truth for backend, models and tunables.
-
-Everything else imports from here - no os.environ lookups and no literal model
-names anywhere else in the codebase, so one file tells you what ran.
+"""
+Single source of truth for backend, models and tunables.
 """
 
 import os

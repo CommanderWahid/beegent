@@ -1,4 +1,5 @@
-"""One OpenAI-SDK client for every LLM call, with the backend as a config switch.
+"""
+One OpenAI-SDK client for every LLM call, with the backend as a config switch.
 
 Both supported backends speak the OpenAI wire format: Ollama exposes it at
 /v1, and Databricks Model Serving / Unity AI Gateway exposes it at
@@ -37,9 +38,10 @@ client = get_llm_client()
 
 
 def _create(model: str, messages: list[dict], **kwargs):
-    """One completion, retried without `temperature` if the endpoint refuses that parameter.
+    """
+    One completion, retried without `temperature` if the endpoint refuses that parameter.
 
-    Databricks' Claude Opus endpoint 400s on temperature ("does not support the temperature
+    Reason: Databricks' Claude Opus endpoint 400s on temperature ("does not support the temperature
     parameter") while its Sonnet and Haiku endpoints accept it. Asking and then dropping the
     parameter beats keeping a per-model capability table in sync with a workspace's endpoints -
     and a hard failure here would take out the critic, whose whole job is to rescue a weak run.
@@ -55,9 +57,10 @@ def _create(model: str, messages: list[dict], **kwargs):
 
 
 def _message_text(msg) -> str:
-    """Flatten an assistant message's content to text.
+    """
+    Flatten an assistant message's content to text.
 
-    Most endpoints return a plain string, but Databricks' Claude Opus endpoint returns a list
+    Reason: Most endpoints return a plain string, but Databricks' Claude Opus endpoint returns a list
     of content blocks. Normalizing here keeps that shape from leaking into _parse_json() and
     every caller downstream.
     """
@@ -75,6 +78,9 @@ def _message_text(msg) -> str:
 
 
 def _parse_json(raw: str) -> dict | None:
+    """
+    Parse a JSON object from a model's reply, or None if no parseable object was found.
+    """
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -123,13 +129,16 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
 
 
 def chat_tools(model: str, messages: list[dict], tools: list[dict]):
-    """One tool-calling completion. Returns the assistant message."""
+    """
+    One tool-calling completion. Returns the assistant message.
+    """
     resp = _create(model, messages, tools=tools, temperature=0)
     return resp.choices[0].message
 
 
 def to_message_dict(msg) -> dict:
-    """Serialize an assistant message for the next request.
+    """
+    Serialize an assistant message for the next request.
 
     Drops Ollama's non-standard `reasoning` field so thinking models stay
     swappable without touching the agents.
