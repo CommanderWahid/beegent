@@ -167,12 +167,26 @@ def serves_data(url: str) -> bool:
         return content_type not in _PAGE_CONTENT_TYPES + _METADATA_CONTENT_TYPES
 
 
+# schema.org types that commonly carry their own `url` field but are never themselves a
+# distribution - harvesting bare "url" from these turns an org's contact page or a person's
+# homepage into a fake dataset resource. downloadUrl/contentUrl/accessUrl are unambiguous
+# distribution vocabulary and are never filtered by this.
+_NON_DISTRIBUTION_TYPES = {
+    "contactpoint", "organization", "person", "postaladdress",
+    "website", "webpage", "imageobject", "place",
+}
+
+
 def _walk_json_for_urls(node, found: list[str]) -> None:
     """Collect distribution URLs from a parsed schema.org/DCAT blob, any nesting."""
     if isinstance(node, dict):
+        node_type = str(node.get("@type", "")).casefold()
         for key, value in node.items():
             if key.casefold() in _DISTRIBUTION_URL_KEYS and isinstance(value, str):
-                if value.startswith("http"):
+                bare_url_on_non_distribution = (
+                    key.casefold() == "url" and node_type in _NON_DISTRIBUTION_TYPES
+                )
+                if value.startswith("http") and not bare_url_on_non_distribution:
                     found.append(value)
             else:
                 _walk_json_for_urls(value, found)

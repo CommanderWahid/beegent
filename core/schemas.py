@@ -19,6 +19,9 @@ class Candidate:
     source: str  # "catalog:hdx" | "search_explore" etc.
     hops: int  # page-fetches it took to find this (0 = direct search/catalog hit)
     rationale: str
+    description: str = ""  # what the page's content actually shows, written by search_explore
+    # from what it saw (fetched text, or an honest "title only" if it never fetched the page)
+    # - triage's evidence for confidence >= 0.5, since triage itself never fetches anything.
     confidence: float | None = None  # filled in by triage
     publisher: str | None = None  # rough guess at the publishing org, filled in by triage
     # The endpoint that actually serves the data - a direct download or an API. Distinct from

@@ -4,9 +4,17 @@ The agent searches once, and only fetches a page when a result looks like a
 homepage/landing page rather than the actual data resource - then follows one or
 two links deeper to find the real data page.
 
+Owns a candidate's full factual record, not just discovery: resource_url extraction
+(_resolve_resource_urls(), via resource_links.py) and a written description of each
+page's content both happen here, the moment a candidate is found - not later in
+merge_triage, which only dedupes, prefilters and scores what this module hands it.
+
 Known limitations (accepted for this POC):
   - web_search scrapes DuckDuckGo Lite. Keyless and free, but unofficial: rate
     limits or markup changes will break it. Swap point is web_search() alone.
+    When DuckDuckGo answers with its anti-bot challenge page instead of results,
+    web_search() raises rather than reporting a silent 0 - that failure mode is
+    otherwise indistinguishable in the logs from a genuinely thin search.
   - fetch_page does a plain HTTP GET with no JS rendering, so JS-only data
     portals look empty.
 """
@@ -19,7 +27,13 @@ from bs4 import BeautifulSoup
 
 import config
 from llm import chat_json, chat_tools, to_message_dict
-from resource_links import looks_like_resource
+from resource_links import (
+    budget_exhausted,
+    looks_like_resource,
+    probe_count,
+    resolve_resource_url,
+    serves_data,
+)
 from schemas import Candidate, SearchAngle
 
 SYSTEM = """You find real, downloadable geospatial data sources on the internet.
@@ -51,9 +65,16 @@ download or an API endpoint you saw in a tool result. If you did not see one, se
 null. Do not repeat the page url there and do not construct a plausible-looking endpoint:
 null is the correct, useful answer when no download or API link was found.
 
+Also write a description: 1-2 sentences on what the page's content actually shows -
+geographic coverage, theme, format, vintage - based on what you saw in a fetch_page
+result. If you never fetched this page (found only via web_search, no tool result to
+read), say so plainly ("title/URL only, page not fetched") rather than guessing content
+you never saw - a downstream step relies on this being honest, not persuasive.
+
 Reply with JSON only:
 {"candidates": [{"url": "...", "title": "...",
                  "resource_url": "<direct download or API endpoint, or null>",
+                 "description": "<what the page's content shows, or 'title/URL only, page not fetched'>",
                  "rationale": "<one sentence: what data is there>"}]}"""
 
 TOOLS = [
@@ -93,6 +114,12 @@ def web_search(query: str, max_results: int = 8) -> list[dict]:
         timeout=config.HTTP_TIMEOUT,
     )
     resp.raise_for_status()
+    if "anomaly.js" in resp.text:
+        # DuckDuckGo Lite's anti-bot challenge page ("Select all squares containing a
+        # duck"), not a real empty search - identical to "0 results" downstream unless
+        # this is called out, which is exactly what made a dead search look like a thin
+        # country/use-case instead of a blocked IP.
+        raise RuntimeError("DuckDuckGo Lite served an anti-bot challenge instead of results")
     soup = BeautifulSoup(resp.text, "html.parser")
     results, seen = [], set()
     for a in soup.select("a.result-link"):
@@ -138,7 +165,7 @@ def _reported_resource_url(raw: dict, url: str, seen: dict[str, int]) -> str | N
     candidate, which is the exact failure this field exists to catch.
 
     Only the cheap, local half of the job lives here, because `seen` exists nowhere else.
-    Candidates left at None are picked up by merge_triage.resolve_resources(), which probes.
+    Candidates left at None are picked up by _resolve_resource_urls() below, which probes.
     """
     reported = raw.get("resource_url")
     if not isinstance(reported, str) or not reported.startswith("http"):
@@ -150,6 +177,37 @@ def _reported_resource_url(raw: dict, url: str, seen: dict[str, int]) -> str | N
         print(f"    [resource] discarding unseen resource_url from model: {reported}")
         return None
     return reported
+
+
+def _resolve_resource_urls(candidates: list[Candidate]) -> None:
+    """
+    Fill in (and sanity-check) each candidate's resource_url, in place.
+
+    Moved here from merge_triage so a candidate's resource_url is settled the moment it's
+    found, before dedupe/prefilter/triage ever see it - triage becomes a pure decision
+    layer over what this step already gathered. resolve_resource_url() memoizes by URL
+    for the whole run, so a candidate re-found by a later angle costs nothing to recheck.
+
+    Already-set values get verified rather than trusted: a link really seen on a real page
+    can still be dead, and a URL that 404s is not a resource.
+    """
+    for cand in candidates:
+        if cand.resource_url:
+            if serves_data(cand.resource_url):
+                continue
+            print(f"    [resource] reported endpoint does not serve data: {cand.resource_url}")
+            cand.resource_url = None
+        cand.resource_url = resolve_resource_url(cand.url)
+        if cand.resource_url:
+            print(f"    [resource] {cand.url}\n               -> {cand.resource_url}")
+
+    found = sum(1 for c in candidates if c.resource_url)
+    print(f"    [resource] {found}/{len(candidates)} resolved ({probe_count()} probes spent)")
+    if budget_exhausted():
+        print(
+            f"    [resource] WARNING: probe budget ({config.MAX_RESOURCE_PROBES}) exhausted - "
+            "candidates after this point look unfetchable and will be capped on that basis"
+        )
 
 
 def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candidate]:
@@ -249,6 +307,7 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 source="search_explore",
                 hops=hops.get(url, 0),
                 rationale=raw.get("rationale", ""),
+                description=str(raw.get("description") or ""),
                 resource_url=_reported_resource_url(raw, url, hops),
             )
         )
@@ -264,9 +323,11 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 source="search_explore",
                 hops=0,
                 rationale="raw search hit (model returned no structured candidates)",
-                # No model verdict to work from; merge_triage.resolve_resources() will probe
+                # No model verdict to work from; _resolve_resource_urls() below will probe
                 # these like any other candidate.
             )
             for hit in search_hits[:5]
         ]
+
+    _resolve_resource_urls(candidates)
     return candidates

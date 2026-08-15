@@ -1,8 +1,10 @@
 """
 Merge & triage: dedupe, drop obvious junk for free, then classify what survives.
 
-Two layers, cheap first - the deterministic pre-filter costs nothing and kills the
-easy junk before any model call.
+Three layers, cheap first - dedupe and the deterministic pre-filter cost nothing and kill
+the easy junk before any model call. No network I/O happens in this module at all:
+resource_url and description are both filled in upstream, by search_explore, the moment a
+candidate is found - this module only ever reads what it's handed.
 """
 
 import mimetypes
@@ -10,59 +12,79 @@ from urllib.parse import urlparse
 
 import config
 from llm import chat_json
-from resource_links import budget_exhausted, probe_count, resolve_resource_url, serves_data
 from schemas import Candidate
 
-TRIAGE_SYSTEM = """You judge whether a URL is a usable geospatial DATA SOURCE for a
-specific request - not merely a page that mentions the topic.
+TRIAGE_SYSTEM = """You judge how good a usable geospatial DATA SOURCE a URL is for a
+specific request - not merely a page that mentions the topic. Report a single number,
+confidence, that answers both "is this actually a dataset, download, API or data catalog
+entry" and "how DIRECTLY does it serve the requested country and use case".
 
-Set is_data_source true only if the page is (or directly serves) a dataset, download,
-API or data catalog entry that plausibly covers the requested country and use case.
-Set it false for blog posts, news, tutorials, product marketing, generic homepages,
-social media, forums and Q&A threads, encyclopedia articles, search-engine result pages,
-and for data that is about something else entirely.
+You are given the URL, its title, a description of the page's content written by the
+search step that found it, and whether a direct resource endpoint (an actual download
+link or API) was identified for it. Use whatever evidence you have; more evidence should
+sharpen the score, not just raise it. One rule overrides everything else below: no
+identified resource endpoint means the ceiling is 0.4, not a target to round toward -
+repeated as the last line of this prompt, right before you answer.
 
-confidence answers a DIFFERENT question from is_data_source. It is not how sure you are
-of the true/false call - it is how DIRECTLY this resource serves the requested country
-and use case. Score it against these bands:
+Below 0.5 is reserved for candidates with no identified resource endpoint:
 
-  0.9-1.0  a specific named dataset, download or API that matches both the country and
-           the use case, with no reservations
-  0.7-0.8  a real dataset page, but broader or adjacent - a national theme layer that
-           contains what was asked for, a superset, or one region of the country
-  0.5-0.6  a catalog or portal entry that probably leads to the data but is not the data
-           itself; or the coverage is plausible but you cannot verify it
-  0.1-0.4  mentions the topic but is not itself a data source (set is_data_source false)
+  0.1-0.4  no resource endpoint identified. Could be a blog, news, tutorial, marketing
+           page, generic homepage, forum/social/encyclopedia/search-result page, the
+           wrong topic entirely, or even a real dataset's own landing page that nobody
+           could confirm a download or API for - all of these land here, regardless of
+           how well the title or description otherwise matches.
 
-The URL itself is your main evidence for which band applies, because you are judging
-from the URL and title alone - not from the page content. Read its path:
+0.5 and above is reserved for candidates with a confirmed resource endpoint. Within that
+range, the description is your best evidence: it can tell you the actual geographic
+coverage, theme and vintage of the data, none of which the URL or title alone can
+promise. Weigh it accordingly:
 
-  https://site.gov/                     bare domain, no path -> a site root. At most 0.6.
-  https://site.gov/datasets             a listing of many datasets -> at most 0.6, it is
-                                        an index, not a dataset
-  https://site.gov/datasets/parcels-2024   a path segment naming one specific dataset
-                                        -> this is the 0.9-1.0 shape
+  0.5-0.6  a confirmed endpoint, but coverage is unclear or unverified - a catalog/portal
+           entry that probably leads to the right data, or a description that does not
+           confirm the country or use case
+  0.6-0.7  a confirmed endpoint for a real dataset, but broader or adjacent - a national
+           theme layer that contains what was asked for, a superset, or one region of the
+           country, whether you read that from the description or infer it from the
+           URL/title
+  0.7-0.8  a confirmed endpoint whose description or URL/title makes a solid case for
+           both the country and the use case, with a minor reservation - one of the two
+           is implicit rather than stated outright, or the description is thin (title
+           only, page never actually fetched)
+  0.8-0.9  a confirmed endpoint whose description (or an unambiguous URL naming the exact
+           dataset and its scope, if the description is thin) explicitly supports both
+           the country and the use case, with only a small uncertainty left - format,
+           freshness, exact boundary vintage
+  0.9-1.0  a specific named dataset, download or API confirmed by its own description (or
+           an exact, unambiguous URL) to match both the country and the use case, with no
+           reservations at all
 
-A good site does not lift its own front page into a high band: the front page of the
-best cadastral portal in the country is still a front page, and scores lower than the
-single dataset page it links to. Reserve 1.0 for an exact, named, directly downloadable
-match with no reservations. If you would give every URL the same score, you are not
-making the judgement: the whole point is to separate the exact matches from the merely
-relevant.
+Before answering, check your own assessment for a reservation about scope, breadth or
+authority - "broader", "adjacent", "supranational", "primarily about X rather than Y",
+"community-sourced rather than official", and similar. A stated reservation like that
+caps you at 0.6-0.7: it is a direct admission this is not the exact match the 0.7+ bands
+require. A score of 0.8 or higher and a hedge in the same assessment is a contradiction -
+if you write the hedge, use the lower band.
 
-You are also told whether a direct resource endpoint - an actual download link or API -
-was identified for this candidate. This outranks topical fit. A page with no identified
-endpoint has not been shown to serve data at all, no matter how well its title matches
-the request: score it at most 0.4. Being the right topic is not the same as being data.
+A good site does not lift its own front page into a high band: the front page of the best
+cadastral portal in the country is still a front page, and scores lower than the single
+dataset page it links to. Reserve 1.0 for an exact, named, directly downloadable match with
+no reservations. If you would give every URL the same score, you are not making the
+judgement: the whole point is to separate the exact matches from the merely relevant.
 
 Also name the organization or entity that PUBLISHES the data - the body behind the
 resource, not the site hosting it. Two datasets on one national portal published by two
-different agencies have different publishers. Be specific when you can, generic when 
-you cannot. Use "unknown" if you have no idea.
+different agencies have different publishers. Be specific when you can, generic when you
+cannot. Use "unknown" if you have no idea.
+
+Last check before you answer: if no resource endpoint was identified for this candidate,
+confidence MUST be 0.4 or below - and 0.4 is the ceiling, not a safe middle value, so if
+you are unsure, go lower (0.1-0.3) rather than rounding up to it. Nothing downstream
+double-checks this number: you are the only place it is enforced. Being the right topic,
+or even having a good description, is not the same as being data you can actually fetch.
 
 Reply with JSON only, with the keys in exactly this order:
 {"assessment": "<one short sentence: what the page actually is, and how well it fits>",
- "is_data_source": true|false, "publisher": "<publishing org>", "confidence": 0.0-1.0}"""
+ "publisher": "<publishing org>", "confidence": 0.0-1.0}"""
 
 
 def _normalize(url: str) -> str:
@@ -128,39 +150,6 @@ def prefilter(candidates: list[Candidate]) -> list[Candidate]:
     return kept
 
 
-def resolve_resources(candidates: list[Candidate]) -> None:
-    """
-    Fill in (and sanity-check) each candidate's resource_url, in place.
-
-    Here rather than in the finders because this is the one place a candidate is seen exactly
-    once - deduped, prefiltered, and immediately before triage turns resource_url into a
-    confidence. Doing it per angle would re-probe the same URL for every angle that found it.
-
-    Already-set values get verified rather than trusted: a link really seen on a real page can
-    still be dead, and a URL that 404s is not a resource. Carried candidates are skipped
-    entirely - they passed triage in an earlier iteration and must not be re-judged here.
-    """
-    for cand in candidates:
-        if cand.confidence is not None:
-            continue
-        if cand.resource_url:
-            if serves_data(cand.resource_url):
-                continue
-            print(f"    [resource] reported endpoint does not serve data: {cand.resource_url}")
-            cand.resource_url = None
-        cand.resource_url = resolve_resource_url(cand.url)
-        if cand.resource_url:
-            print(f"    [resource] {cand.url}\n               -> {cand.resource_url}")
-
-    found = sum(1 for c in candidates if c.resource_url)
-    print(f"  [resource] {found}/{len(candidates)} resolved ({probe_count()} probes spent)")
-    if budget_exhausted():
-        print(
-            f"  [resource] WARNING: probe budget ({config.MAX_RESOURCE_PROBES}) exhausted - "
-            "candidates after this point look unfetchable and will be capped on that basis"
-        )
-
-
 def _report_spread(survivors: list[Candidate]) -> None:
     """
     Log how much the triage scores actually discriminate.
@@ -217,13 +206,14 @@ def triage(
                         f"Country: {country}\nUse case: {use_case}\n"
                         f"URL: {cand.url}\nTitle: {cand.title}\n"
                         f"Direct resource endpoint: {cand.resource_url or 'none identified'}\n"
+                        f"Description: {cand.description or '(not available)'}\n"
                         f"What the finder said: {cand.rationale}"
                     ),
                 },
             ],
         )
 
-        if data is None or "is_data_source" not in data:
+        if data is None or "confidence" not in data:
             # No answer - not a "no". Keep it out of the results, but hand it back.
             cand.rationale = (
                 "triage returned no parseable verdict after "
@@ -233,7 +223,6 @@ def triage(
             unresolved.append(cand)
             continue
 
-        is_data = bool(data.get("is_data_source"))
         try:
             confidence = float(data.get("confidence", 0.0))
         except (TypeError, ValueError):
@@ -243,20 +232,14 @@ def triage(
         if publisher and publisher.lower() == "unknown":
             publisher = None
 
-        # Deterministic safety net, independent of what the model said. The prompt asks for
-        # the same thing, but a model that ignores it would otherwise put a landing page at
-        # the top of the list - which is the bug this whole field exists to fix. min() means
-        # this can only ever lower a score, never raise one. Applied before the floor
-        # comparison, so an unfetchable candidate is dropped rather than ranked last.
-        capped = cand.resource_url is None and confidence > config.NO_RESOURCE_CONFIDENCE_CAP
-        if capped:
-            confidence = min(confidence, config.NO_RESOURCE_CONFIDENCE_CAP)
-
-        verdict = "keep" if is_data and confidence >= config.TRIAGE_CONFIDENCE_FLOOR else "drop"
+        # No code-side cap here: TRIAGE_SYSTEM instructs the model to score at most 0.4
+        # when cand.resource_url is None, and that instruction is the only enforcement -
+        # trusted rather than re-applied. If the model ignores it, the escalation gate in
+        # critic.py ("no candidate has a fetchable resource endpoint") is what catches it.
+        verdict = "keep" if confidence >= config.TRIAGE_CONFIDENCE_FLOOR else "drop"
         print(
-            f"    [triage] {verdict} (data={is_data} conf={confidence:.2f}"
-            f"{' CAPPED: no resource endpoint' if capped else ''} "
-            f"publisher={publisher or '?'}) {cand.url}"
+            f"    [triage] {verdict} (conf={confidence:.2f} publisher={publisher or '?'}) "
+            f"{cand.url}"
         )
         if verdict == "keep":
             cand.confidence = confidence
@@ -279,7 +262,6 @@ def merge_and_triage(
     deduped = dedupe(raw)
     filtered = prefilter(deduped)
     print(f"  [merge] {len(raw)} raw -> {len(deduped)} deduped -> {len(filtered)} after prefilter")
-    resolve_resources(filtered)
     survivors, unresolved = triage(country, use_case, filtered)
     print(
         f"  [triage] {len(filtered)} -> {len(survivors)} survived, "
