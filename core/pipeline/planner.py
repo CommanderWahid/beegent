@@ -1,8 +1,8 @@
 """Planner: turns a use case into 1..n distinct search angles."""
 
-import config
-from llm import chat_json
-from schemas import SearchAngle
+from core import config
+from core.llm import chat_json
+from core.schemas import SearchAngle
 
 SYSTEM = """You plan how to find geospatial datasets on the internet.
 

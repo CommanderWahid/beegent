@@ -60,7 +60,7 @@ Example:
 cp .env.example .env
 # edit .env with your Databricks host + token
 
-LLM_BACKEND=databricks uv run python core/run.py --country Kenya \
+LLM_BACKEND=databricks uv run python -m core.run --country Kenya \
   --use-case "administrative boundaries for a flood-response dashboard"
 ```
 

@@ -15,6 +15,12 @@ portal already speaks:
 Returning None is always allowed and always safe: triage caps a candidate with no resource
 endpoint, so a wrong guess here would launder a landing page into a real candidate, while a
 miss only costs one candidate its confidence.
+
+Deliberately keeps its own raw requests.get() calls rather than routing through
+search_explore.py's fetch_page() (whichever SearchBackend is active - see
+core/search_backends/): _walk_json_for_urls() needs real HTML (the
+<script type="application/ld+json"> blocks it parses) and serves_data() needs real response
+headers - both of which a content-extraction API returns processed, not raw.
 """
 
 import json
@@ -24,7 +30,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-import config
+from core import config
 
 # Formats that are the data rather than a page about it.
 _DATA_EXTENSIONS = (

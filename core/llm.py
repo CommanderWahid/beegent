@@ -10,7 +10,7 @@ import json
 
 from openai import BadRequestError, OpenAI
 
-import config
+from core import config
 
 
 def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:

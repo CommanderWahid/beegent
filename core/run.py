@@ -1,6 +1,6 @@
 """CLI for the discovery-phase POC.
 
-    python run.py --country Kenya --use-case "administrative boundaries for a flood dashboard"
+    python -m core.run --country Kenya --use-case "administrative boundaries for a flood dashboard"
 
 Runs planner -> catalog workers -> search & explore -> merge/triage -> escalation
 gate -> critic, and writes candidate_list.json either way.
@@ -10,13 +10,16 @@ import argparse
 import json
 import time
 
-import config
-from catalog_workers import run_catalog_workers
-from critic import needs_escalation, run_critic
-from merge_triage import merge_and_triage
-from planner import plan
-from schemas import Candidate, DiscoveryRun
-from search_explore import explore_angle
+from core import config
+from core.pipeline import (
+    explore_angle,
+    merge_and_triage,
+    needs_escalation,
+    plan,
+    run_catalog_workers,
+    run_critic,
+)
+from core.schemas import Candidate, DiscoveryRun
 
 
 def discover(country: str, use_case: str) -> DiscoveryRun:

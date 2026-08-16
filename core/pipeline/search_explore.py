@@ -9,32 +9,30 @@ Owns a candidate's full factual record, not just discovery: resource_url extract
 page's content both happen here, the moment a candidate is found - not later in
 merge_triage, which only dedupes, prefilters and scores what this module hands it.
 
-Known limitations (accepted for this POC):
-  - web_search scrapes DuckDuckGo Lite. Keyless and free, but unofficial: rate
-    limits or markup changes will break it. Swap point is web_search() alone.
-    When DuckDuckGo answers with its anti-bot challenge page instead of results,
-    web_search() raises rather than reporting a silent 0 - that failure mode is
-    otherwise indistinguishable in the logs from a genuinely thin search.
-  - fetch_page does a plain HTTP GET with no JS rendering, so JS-only data
-    portals look empty.
+Search and page-fetching go through a pluggable SearchBackend (see
+core/search_backends/) - which provider is active is config.SEARCH_BACKEND, not something
+this module hardcodes. Today's only implementation (core/search_backends/tavily.py) is a
+real authenticated JSON API with no scraping fragility and no anti-bot blocking, and its
+Extract call renders JS server-side, so JS-only portals are no longer an automatic dead
+end for this step specifically (resource_links.py's own resolve_resource_url() still
+can't render JS - see CLAUDE.md). Cost is bounded the same way regardless of backend:
+MAX_SEARCHES_PER_ANGLE and MAX_FETCHES_PER_ANGLE cap it per angle.
 """
 
 import json
-from urllib.parse import urljoin
+from dataclasses import asdict
 
-import requests
-from bs4 import BeautifulSoup
-
-import config
-from llm import chat_json, chat_tools, to_message_dict
-from resource_links import (
+from core import config
+from core.llm import chat_json, chat_tools, to_message_dict
+from core.pipeline.resource_links import (
     budget_exhausted,
     looks_like_resource,
     probe_count,
     resolve_resource_url,
     serves_data,
 )
-from schemas import Candidate, SearchAngle
+from core.schemas import Candidate, SearchAngle
+from core.search_backends import SearchHit, get_search_backend
 
 SYSTEM = """You find real, downloadable geospatial data sources on the internet.
 
@@ -105,57 +103,6 @@ TOOLS = [
 ]
 
 
-def web_search(query: str, max_results: int = 8) -> list[dict]:
-    """Keyless web search via the DuckDuckGo Lite endpoint."""
-    resp = requests.post(
-        "https://lite.duckduckgo.com/lite/",
-        data={"q": query},
-        headers={"User-Agent": config.USER_AGENT},
-        timeout=config.HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    if "anomaly.js" in resp.text:
-        # DuckDuckGo Lite's anti-bot challenge page ("Select all squares containing a
-        # duck"), not a real empty search - identical to "0 results" downstream unless
-        # this is called out, which is exactly what made a dead search look like a thin
-        # country/use-case instead of a blocked IP.
-        raise RuntimeError("DuckDuckGo Lite served an anti-bot challenge instead of results")
-    soup = BeautifulSoup(resp.text, "html.parser")
-    results, seen = [], set()
-    for a in soup.select("a.result-link"):
-        url = a.get("href", "")
-        if not url.startswith("http") or "duckduckgo.com" in url or url in seen:
-            continue
-        seen.add(url)
-        results.append({"title": a.get_text(strip=True), "url": url})
-        if len(results) >= max_results:
-            break
-    return results
-
-
-def fetch_page(url: str, max_chars: int = 3000, max_links: int = 30) -> dict:
-    """Plain GET + tag-stripped text + outbound links. No JS rendering."""
-    resp = requests.get(
-        url, headers={"User-Agent": config.USER_AGENT}, timeout=config.HTTP_TIMEOUT
-    )
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer"]):
-        tag.decompose()
-    text = " ".join(soup.get_text(" ").split())[:max_chars]
-
-    links, seen = [], set()
-    for a in soup.find_all("a", href=True):
-        absolute = urljoin(url, a["href"])
-        if not absolute.startswith("http") or absolute in seen:
-            continue
-        seen.add(absolute)
-        links.append({"text": a.get_text(strip=True)[:80], "url": absolute})
-        if len(links) >= max_links:
-            break
-    return {"url": url, "text": text, "links": links}
-
-
 def _reported_resource_url(raw: dict, url: str, seen: dict[str, int]) -> str | None:
     """The endpoint the model reported, if it is allowed to count. No network.
 
@@ -223,10 +170,12 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
         },
     ]
 
+    backend = get_search_backend()
     searches = fetches = 0
     hops: dict[str, int] = {}  # url -> page-fetches it took to surface it
     titles: dict[str, str] = {}
-    search_hits: list[dict] = []
+    snippets: dict[str, str] = {}  # url -> the backend's search content snippet
+    search_hits: list[SearchHit] = []  # for the no-structured-candidates fallback below
 
     for _ in range(config.MAX_TOOL_TURNS_PER_ANGLE):
         msg = chat_tools(config.SEARCH_EXPLORE_MODEL, messages, TOOLS)
@@ -248,16 +197,17 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 else:
                     searches += 1
                     try:
-                        hits = web_search(args.get("query", angle.description))
+                        hits = backend.web_search(args.get("query", angle.description))
                     except Exception as exc:
                         hits = []
                         print(f"    [web_search] failed: {exc}")
                     print(f"    [web_search] {args.get('query', '')!r} -> {len(hits)} results")
                     for hit in hits:
-                        hops.setdefault(hit["url"], 0)
-                        titles.setdefault(hit["url"], hit["title"])
+                        hops.setdefault(hit.url, 0)
+                        titles.setdefault(hit.url, hit.title)
+                        snippets.setdefault(hit.url, hit.content)
                     search_hits.extend(hits)
-                    result = hits
+                    result = [asdict(h) for h in hits]
 
             elif name == "fetch_page":
                 url = args.get("url", "")
@@ -268,13 +218,13 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 else:
                     fetches += 1
                     try:
-                        page = fetch_page(url)
+                        page = backend.fetch_page(url)
                         parent_hops = hops.get(url, 0)
-                        for link in page["links"]:
-                            hops.setdefault(link["url"], parent_hops + 1)
-                            titles.setdefault(link["url"], link["text"])
-                        result = page
-                        print(f"    [fetch_page] {url} ({len(page['text'])} chars)")
+                        for link in page.links:
+                            hops.setdefault(link.url, parent_hops + 1)
+                            titles.setdefault(link.url, link.text)
+                        result = asdict(page)
+                        print(f"    [fetch_page] {url} ({len(page.text)} chars)")
                     except Exception as exc:
                         result = f"fetch failed: {exc}"
                         print(f"    [fetch_page] {url} failed: {exc}")
@@ -307,7 +257,7 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
                 source="search_explore",
                 hops=hops.get(url, 0),
                 rationale=raw.get("rationale", ""),
-                description=str(raw.get("description") or ""),
+                description=str(raw.get("description") or snippets.get(url, "")),
                 resource_url=_reported_resource_url(raw, url, hops),
             )
         )
@@ -318,11 +268,12 @@ def explore_angle(country: str, use_case: str, angle: SearchAngle) -> list[Candi
         print("    [explore] no candidates from model, falling back to raw search hits")
         candidates = [
             Candidate(
-                url=hit["url"],
-                title=hit["title"],
+                url=hit.url,
+                title=hit.title,
                 source="search_explore",
                 hops=0,
                 rationale="raw search hit (model returned no structured candidates)",
+                description=hit.content,
                 # No model verdict to work from; _resolve_resource_urls() below will probe
                 # these like any other candidate.
             )

@@ -10,9 +10,9 @@ candidate is found - this module only ever reads what it's handed.
 import mimetypes
 from urllib.parse import urlparse
 
-import config
-from llm import chat_json
-from schemas import Candidate
+from core import config
+from core.llm import chat_json
+from core.schemas import Candidate
 
 TRIAGE_SYSTEM = """You judge how good a usable geospatial DATA SOURCE a URL is for a
 specific request - not merely a page that mentions the topic. Report a single number,

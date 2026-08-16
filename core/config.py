@@ -11,6 +11,11 @@ load_dotenv()  # picks up DATABRICKS_HOST / DATABRICKS_TOKEN etc. from a .env at
 
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 
+# search_explore.py's search/fetch tool provider. Add new backends by dropping a new
+# core/search_backends/<name>.py file (see core/search_backends/base.py) - it's
+# auto-discovered by living in that directory, nothing here needs to change.
+SEARCH_BACKEND = os.environ.get("SEARCH_BACKEND", "tavily")
+
 # Model name is backend-specific: an Ollama model tag when LLM_BACKEND=ollama,
 # or a Databricks serving-endpoint name when LLM_BACKEND=databricks. Defaults below are
 # picked per backend so flipping LLM_BACKEND alone is enough - no per-model env vars
@@ -42,6 +47,10 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
 DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
 
+# search_explore.py's web_search()/fetch_page() - required regardless of LLM_BACKEND, this
+# is the search/fetch layer, not the LLM.
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
+
 # --- pipeline tunables -------------------------------------------------------
 
 MAX_ANGLES = 10  # cap on planner output, for cost control
@@ -50,6 +59,10 @@ MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 MAX_SEARCHES_PER_ANGLE = 1
 MAX_FETCHES_PER_ANGLE = 3
 MAX_TOOL_TURNS_PER_ANGLE = 8  # safety net so a chatty model can't spin forever
+
+TAVILY_SEARCH_DEPTH = "basic"   # 1 credit/call; "advanced" costs 2 - basic is enough,
+                                 # search_explore only ever makes MAX_SEARCHES_PER_ANGLE calls
+TAVILY_EXTRACT_DEPTH = "basic"  # 1 credit/5 URLs; matches fetch_page's existing per-fetch budget
 
 MIN_CANDIDATES = 2  # escalation gate: fewer than this -> call the critic
 # Single-publisher results only escalate when they are also thin - several distinct
