@@ -21,10 +21,26 @@ angle that names a category.
 Decide how many angles the use case actually warrants: a narrow, well-known need may
 justify only 1-2, a broad or ambiguous one up to {max_angles}. Never exceed {max_angles}.
 
+Each angle is not just something to search for - it is a concrete FETCH TASK. A downstream
+agent will chase it all the way to a file and verify the bytes, so say what file it should
+come back with:
+
+  "dataset" - the file in plain words, including its geographic extent, e.g.
+              "building footprints, whole country" or "level-2 administrative boundaries".
+  "format"  - the file format to ask for. Prefer, in this order: GeoParquet, GeoPackage,
+              Shapefile, GeoJSON, CSV. Choose what this publisher plausibly offers,
+              not always the first one. Leave it empty only if the format genuinely
+              does not matter. Never ask for a documentation format (PDF, TXT, MD) -
+              those are not data.
+  "vintage" - "latest" unless the use case names a specific year/edition.
+
 Reply with JSON only:
 {{"angles": [{{"description": "<what to search for, phrased as a search intent>",
               "channel_hint": "catalog" | "web_search" | "national_geoportal",
-              "rationale": "<one sentence on why this route is worth trying>"}}]}}"""
+              "rationale": "<one sentence on why this route is worth trying>",
+              "dataset": "<the file wanted, with its extent>",
+              "format": "<GeoParquet | GeoPackage | Shapefile | GeoJSON | CSV, or empty>",
+              "vintage": "latest"}}]}}"""
 
 
 def plan(country: str, use_case: str, feedback: str | None = None) -> list[SearchAngle]:
@@ -52,6 +68,11 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
                     description=str(raw["description"]),
                     channel_hint=str(raw.get("channel_hint", "web_search")),
                     rationale=str(raw.get("rationale", "")),
+                    # A missing spec must not lose the angle: description is a usable
+                    # dataset description, and "" format falls back to a liveness check.
+                    dataset=str(raw.get("dataset") or raw["description"]),
+                    format=str(raw.get("format") or ""),
+                    vintage=str(raw.get("vintage") or "latest"),
                 )
             )
 
@@ -61,6 +82,9 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
                 description=f"{use_case} data for {country}",
                 channel_hint="web_search",
                 rationale="fallback: planner returned nothing usable",
+                dataset=f"{use_case} for {country}",
+                format="",
+                vintage="latest",
             )
         ]
     return angles

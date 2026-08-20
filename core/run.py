@@ -2,8 +2,11 @@
 
     python -m core.run --country Kenya --use-case "administrative boundaries for a flood dashboard"
 
-Runs planner -> catalog workers -> search & explore -> merge/triage -> escalation
-gate -> critic, and writes candidate_list.json either way.
+Runs planner -> catalog workers -> geofetch (per angle) -> escalation gate -> critic,
+and writes candidate_list.json either way.
+
+Every candidate that reaches the output has had its resource_url independently probed by
+core/pipeline/geofetch.py - an unverified URL cannot get here.
 """
 
 import argparse
@@ -12,19 +15,49 @@ import time
 
 from core import config
 from core.pipeline import (
-    explore_angle,
-    merge_and_triage,
     needs_escalation,
     plan,
+    resolve_angle,
     run_catalog_workers,
     run_critic,
 )
 from core.schemas import Candidate, DiscoveryRun
+from core.search_backends import normalize_url
+
+
+def _rank(candidates: list[Candidate]) -> list[Candidate]:
+    """Order the pool and cap it. Not triage - there is no judgement here.
+
+    Deduping is the one merge job that survives: two angles can chase different framings of
+    the same dataset and land on the same file, and a re-plan can re-find what iteration 1
+    already verified. First occurrence wins, and since carried candidates are passed in
+    first, a re-found duplicate never displaces the one already in the list.
+    """
+    best: dict[str, Candidate] = {}
+    for cand in candidates:
+        best.setdefault(normalize_url(cand.resource_url or cand.url), cand)
+    ranked = sorted(best.values(), key=lambda c: c.confidence or 0.0, reverse=True)
+    return ranked[: config.MAX_FINAL_CANDIDATES]
+
+
+_COST_KEYS = ("http_requests", "prompt_tokens", "completion_tokens", "total_tokens")
 
 
 def discover(country: str, use_case: str) -> DiscoveryRun:
     run = DiscoveryRun(
-        country=country, use_case=use_case, max_iterations=config.MAX_ITERATIONS
+        country=country,
+        use_case=use_case,
+        max_iterations=config.MAX_ITERATIONS,
+        backend=config.LLM_BACKEND,
+        models={
+            "planner": config.PLANNER_MODEL,
+            "geofetch": config.GEOFETCH_MODEL,
+            "critic": config.CRITIC_MODEL,
+        },
+        # Accumulated as angles finish, never summed from run.candidates at the end:
+        # run.unresolved is replaced each iteration, so a final sum would silently
+        # under-count every dead end from iteration 1.
+        totals=dict.fromkeys(("angles_run",) + _COST_KEYS, 0),
     )
 
     # Catalog workers are deterministic and query-independent enough to run once;
@@ -43,29 +76,38 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         for angle in angles:
             print(f"  - [{angle.channel_hint}] {angle.description}")
 
-        # Carried candidates go in first: they already passed triage, so they should
-        # win any dedupe collision and never be squeezed out by the per-domain cap.
-        # A re-plan must add to the pool, not restart it - otherwise a good hit from
+        # Carried candidates go in first: they already resolved to a verified file, so
+        # they win any collision and are never squeezed out by a re-found duplicate. A
+        # re-plan must add to the pool, not restart it - otherwise a good hit from
         # iteration 1 silently vanishes because iteration 2 didn't happen to re-find it.
-        # Unresolved ones ride along too: their confidence is None, so a re-plan gives
-        # them the real triage call they never got.
-        raw = carried + list(run.unresolved) + list(catalog_hits)
-        if carried or run.unresolved:
-            print(
-                f"[carry] {len(carried)} carried + {len(run.unresolved)} unresolved "
-                f"from iteration {iteration - 1}"
-            )
-        for i, angle in enumerate(angles, 1):
-            print(f"[explore] angle {i}/{len(angles)}: {angle.description}")
-            try:
-                found = explore_angle(country, use_case, angle)
-            except Exception as exc:  # one bad angle must not kill the run
-                print(f"    [explore] failed: {exc}")
-                found = []
-            print(f"    [explore] {len(found)} candidate(s)")
-            raw.extend(found)
+        if carried:
+            print(f"[carry] {len(carried)} verified from iteration {iteration - 1}")
 
-        run.candidates, run.unresolved = merge_and_triage(country, use_case, raw)
+        fresh: list[Candidate] = []
+        misses: list[Candidate] = []
+        for i, angle in enumerate(angles, 1):
+            print(f"[geofetch] angle {i}/{len(angles)}: {angle.description}")
+            print(f"    [geofetch] want: {angle.dataset} [{angle.format or 'any format'}]")
+            try:
+                found, missed = resolve_angle(country, angle)
+            except Exception as exc:  # one bad angle must not kill the run
+                print(f"    [geofetch] failed: {exc}")
+                found = missed = None
+            if found:
+                fresh.append(found)
+            elif missed:
+                misses.append(missed)
+            # Cost is carried on whichever slot came back. When both are None the angle
+            # died in its seed search, and that one request goes unrecorded - not worth
+            # widening resolve_angle()'s return signature to capture.
+            if found or missed:
+                run.totals["angles_run"] += 1
+                cost = (found or missed).cost
+                for key in _COST_KEYS:
+                    run.totals[key] += cost.get(key, 0)
+
+        run.candidates = _rank(carried + list(catalog_hits) + fresh)
+        run.unresolved = misses
         carried = list(run.candidates)
 
         escalate, gate_reason = needs_escalation(run.candidates, run.unresolved)
@@ -107,8 +149,7 @@ def main() -> None:
     started = time.time()
     print(
         f"[config] backend={config.LLM_BACKEND} planner={config.PLANNER_MODEL} "
-        f"search={config.SEARCH_EXPLORE_MODEL} triage={config.TRIAGE_MODEL} "
-        f"critic={config.CRITIC_MODEL}"
+        f"geofetch={config.GEOFETCH_MODEL} critic={config.CRITIC_MODEL}"
     )
     run = discover(args.country, args.use_case)
 
@@ -119,18 +160,31 @@ def main() -> None:
     print(f"status:     {run.status}")
     print(f"iterations: {run.iteration}/{run.max_iterations}")
     print(f"candidates: {len(run.candidates)}")
-    fetchable = sum(1 for c in run.candidates if c.resource_url)
-    print(f"fetchable:  {fetchable}/{len(run.candidates)} with a resource endpoint")
+    verified = sum(1 for c in run.candidates if c.verification)
+    print(f"verified:   {verified}/{len(run.candidates)} independently probed")
     if run.unresolved:
-        print(f"unresolved: {len(run.unresolved)} (triage gave no verdict - see JSON)")
+        print(f"unresolved: {len(run.unresolved)} angle(s) found no verifiable download")
         for cand in run.unresolved:
-            print(f"            {cand.url}")
+            why = str(cand.claim.get("failure_reason", ""))[:80]
+            print(f"            {cand.url} - {why}")
     if run.candidates:
         top = run.candidates[0]
         print(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
         print(f"            resource: {top.resource_url or 'none identified'}")
+        if top.verification:
+            print(
+                f"            probed:   HTTP {top.verification.get('status')} "
+                f"{top.verification.get('payload_type')} "
+                f"({top.verification.get('first_bytes_hex')})"
+            )
     if run.reason:
         print(f"reason:     {run.reason}")
+    t = run.totals
+    print(
+        f"cost:       {t['angles_run']} angle(s), {t['http_requests']} request(s), "
+        f"{t['total_tokens']:,} tokens "
+        f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
+    )
     print(f"written to: {args.out}")
 
 

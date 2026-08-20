@@ -11,11 +11,6 @@ load_dotenv()  # picks up DATABRICKS_HOST / DATABRICKS_TOKEN etc. from a .env at
 
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 
-# search_explore.py's search/fetch tool provider. Add new backends by dropping a new
-# core/search_backends/<name>.py file (see core/search_backends/base.py) - it's
-# auto-discovered by living in that directory, nothing here needs to change.
-SEARCH_BACKEND = os.environ.get("SEARCH_BACKEND", "tavily")
-
 # Model name is backend-specific: an Ollama model tag when LLM_BACKEND=ollama,
 # or a Databricks serving-endpoint name when LLM_BACKEND=databricks. Defaults below are
 # picked per backend so flipping LLM_BACKEND alone is enough - no per-model env vars
@@ -23,23 +18,25 @@ SEARCH_BACKEND = os.environ.get("SEARCH_BACKEND", "tavily")
 _DEFAULT_MODELS = {
     "ollama": {  # Local setup (RTX 4070 Laptop, 8GB)
         "PLANNER_MODEL": "deepseek-r1:14b",
-        "SEARCH_EXPLORE_MODEL": "qwen3:8b",
-        "TRIAGE_MODEL": "llama3.1:8b",
+        "GEOFETCH_MODEL": "qwen3:14b",  # qwen3 has the most reliable tool calling under
+                                        # Ollama; deepseek-r1 does not. Note ~9GB at Q4 on
+                                        # an 8GB card - it will spill to CPU and run slower
+                                        # per step than the 8b, which is the trade for a
+                                        # model that actually converges instead of looping.
         "CRITIC_MODEL": "deepseek-r1:14b",
     },
     "databricks": {  # serving-endpoint names, not bare model names - verify with
         # `GET /api/2.0/serving-endpoints` if these ever 404 in your workspace
         "PLANNER_MODEL": "databricks-claude-sonnet-4-6",
-        "SEARCH_EXPLORE_MODEL": "databricks-claude-haiku-4-5",
-        "TRIAGE_MODEL": "databricks-claude-haiku-4-5",
+        "GEOFETCH_MODEL": "databricks-claude-haiku-4-5",
         "CRITIC_MODEL": "databricks-claude-opus-5",
     },
 }
 _defaults = _DEFAULT_MODELS.get(LLM_BACKEND, _DEFAULT_MODELS["ollama"])
 
 PLANNER_MODEL = os.environ.get("PLANNER_MODEL", _defaults["PLANNER_MODEL"])
-SEARCH_EXPLORE_MODEL = os.environ.get("SEARCH_EXPLORE_MODEL", _defaults["SEARCH_EXPLORE_MODEL"])
-TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", _defaults["TRIAGE_MODEL"])  # small/cheap - once per candidate
+GEOFETCH_MODEL = os.environ.get("GEOFETCH_MODEL", _defaults["GEOFETCH_MODEL"])  # tool-calling
+# agent, once per angle - needs native function calling, this is the expensive one
 CRITIC_MODEL = os.environ.get("CRITIC_MODEL", _defaults["CRITIC_MODEL"])  # rare calls, highest stakes
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -47,54 +44,47 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
 DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
 
-# search_explore.py's web_search()/fetch_page() - required regardless of LLM_BACKEND, this
-# is the search/fetch layer, not the LLM.
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
-
 # --- pipeline tunables -------------------------------------------------------
 
-MAX_ANGLES = 10  # cap on planner output, for cost control
+MAX_ANGLES = 5  # cap on planner output, and the main cost lever: every angle is a
+                # full agent run (GEOFETCH_MAX_STEPS calls), not one cheap search
 MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 
-MAX_SEARCHES_PER_ANGLE = 1
-MAX_FETCHES_PER_ANGLE = 3
-MAX_TOOL_TURNS_PER_ANGLE = 8  # safety net so a chatty model can't spin forever
+# --- geofetch agent (core/pipeline/geofetch.py) -------------------------------
 
-TAVILY_SEARCH_DEPTH = "basic"   # 1 credit/call; "advanced" costs 2 - basic is enough,
-                                 # search_explore only ever makes MAX_SEARCHES_PER_ANGLE calls
-TAVILY_EXTRACT_DEPTH = "basic"  # 1 credit/5 URLs; matches fetch_page's existing per-fetch budget
+GEOFETCH_MAX_STEPS = 20  # agent iterations (= LLM calls) per angle; the cost cap
+GEOFETCH_MAX_HTTP_REQUESTS = 50  # web requests per angle, across all three tools
+GEOFETCH_MIN_EFFORT_REQUESTS = 5  # a failure report filed before this many requests is
+                                  # bounced back once with a checklist of untried techniques.
+                                  # Weak models give up long before they have tried the
+                                  # methodology; this is the floor on genuine effort.
 
-MIN_CANDIDATES = 2  # escalation gate: fewer than this -> call the critic
-# Single-publisher results only escalate when they are also thin - several distinct
-# high-confidence datasets from one publisher is a good outcome, not a failure.
-SINGLE_PUBLISHER_MIN_CANDIDATES = 3
-MAX_FINAL_CANDIDATES = 6
-TRIAGE_CONFIDENCE_FLOOR = 0.5
+# History compaction. Ollama silently evicts the OLDEST messages on context overflow -
+# i.e. the system prompt and the task itself - so the agent forgets what it was doing.
+# Trimming old tool results in place is what keeps a long run on-goal.
+KEEP_FULL_TOOL_RESULTS = 5  # most recent tool results kept at full length
+TRIM_TOOL_TO = 500  # older ones truncated to this many chars
+TRIM_ASSISTANT_TO = 800  # cap on a kept assistant message
 
-# Resource resolution spends HTTP requests per unique candidate URL, memoized for the whole
-# run - so although it's invoked from search_explore.py per angle (not merge_triage, which
-# does no network I/O), a candidate re-found by a later angle or carried into the next
-# iteration costs nothing to recheck. Worst case is roughly two probes per unique candidate.
-# Observed ~56 probes for a 20-candidate run, so this needs real headroom: exhausting it makes
-# later candidates look unfetchable, which triage then caps and drops on that basis.
-# search_explore._resolve_resource_urls() warns when it runs out so that never happens
-# silently.
-MAX_RESOURCE_PROBES = 150
-RESOURCE_PROBE_BYTES = 2048  # range size for the content-type check - enough to get headers back
-# A link-heavy page can offer dozens of resource-shaped URLs; probing them all would burn the
-# whole run's budget on one candidate. The extractor puts its best evidence first, so the
-# answer is in the first few or not there at all.
-MAX_RESOURCE_CANDIDATES_PER_PAGE = 5
-# So one site can't flood the list - but not so tight that a country whose open data is
-# concentrated on a single national portal loses its best datasets. data.gouv.fr hit the old
-# cap of 3 and would have discarded IGN's BD TOPO. MAX_FINAL_CANDIDATES is the real output cap.
-MAX_PER_DOMAIN = 6
+# --- web tools (core/search_backends/web_tools.py) ----------------------------
+
+MAX_BODY_BYTES = 60_000  # per fetched page - local-model context economy
+MAX_TEXT_CHARS = 4_000  # extracted HTML text kept per page
+MAX_LINKS = 80  # hyperlinks reported per page
+MAX_URLS_FOUND = 60  # entries in fetch_page()'s flat urls_found list
+PROBE_BYTES = 16  # enough for every magic signature we know
+
+# Verified beats self-assessed: found=True means the harness independently probed the file
+# and the magic bytes matched the requested format, so even a "low" self-report outranks
+# anything an unverified candidate could have scored.
+CONFIDENCE_BY_REPORT = {"high": 0.95, "medium": 0.8, "low": 0.7}
+CONFIDENCE_DEFAULT = 0.7
+
+# Output cap. Cannot bind within one iteration now that MAX_ANGLES is 5, but still can
+# across iterations - _rank() sees carried + fresh.
+MAX_FINAL_CANDIDATES = 5
 
 CHAT_JSON_ATTEMPTS = 2  # a JSON-mode call that comes back unparseable gets one retry
 
 HTTP_TIMEOUT = 20
 LLM_TIMEOUT = 180
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)

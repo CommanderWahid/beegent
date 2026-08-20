@@ -16,10 +16,12 @@ Exactly two decisions are available:
 
 Do not choose "replan" just to try again; only if you can name a genuinely different route.
 
-Each candidate lists whether a fetchable resource endpoint was identified for it. When the run
-failed because nothing was fetchable, a good replan names routes that lead to actual downloads
-or APIs - a data portal's export/API endpoints, a WFS/WMS service, a direct file release - rather
-than more pages about the data.
+Each candidate that made it through was resolved to a real file and independently probed, so
+a thin result means the ANGLES were wrong, not that the verification was too strict. Angles
+that dead-ended are listed too: they name portals that were reached but yielded no
+downloadable file. A good replan names routes that lead to actual downloads or APIs - a
+publisher's bulk-download service, a WFS/WMS/OGC endpoint, a direct file release - rather
+than more pages about the data. Naming a different publisher usually beats rephrasing.
 
 Reply with JSON only:
 {"decision": "replan" | "needs_human_review", "note": "<one sentence>"}"""
@@ -31,31 +33,31 @@ def needs_escalation(
     """
     Deterministic threshold check - cheap, no model call.
 
-    TODO: tune these numbers once we have run data.
+    Two conditions only, both about whether the PLAN worked: nothing was verified at all, or
+    more angles dead-ended than paid off. Candidate count is deliberately not one of them.
     """
-    if len(candidates) < config.MIN_CANDIDATES:
-        return True, f"only {len(candidates)} candidate(s) survived triage"
-
-    # Fetchability is not negotiable: a run can be diverse, plentiful and topically perfect and
-    # still be worthless if not one candidate has an endpoint you can actually pull data from.
+    # Total failure. `any([])` is False, so this is what catches an empty run - it is the
+    # load-bearing branch, not the invariant guard it reads like. It doubles as that guard:
+    # geofetch only returns found=True after probing, so a non-empty list reaching here with
+    # no resource_url at all would mean the contract was broken upstream.
     if not any(c.resource_url for c in candidates):
         return True, (
-            f"none of the {len(candidates)} candidate(s) have a fetchable resource endpoint"
+            "no angle resolved to a verified download"
+            if not candidates
+            else f"none of the {len(candidates)} candidate(s) have a fetchable resource "
+            "endpoint"
         )
 
-    # A run that failed to judge most of what it found has not earned a confident "ok".
+    # More angles dead-ended than paid off: the plan itself is the problem, not this run's
+    # luck. Worth a critic call before calling the result good.
     if len(unresolved) > len(candidates):
         return True, (
-            f"triage could not judge {len(unresolved)} of "
-            f"{len(unresolved) + len(candidates)} candidates"
+            f"{len(unresolved)} of {len(unresolved) + len(candidates)} angle(s) resolved "
+            "to no verifiable download"
         )
 
-    publishers = {c.publisher_key() for c in candidates}
-    if len(publishers) == 1 and len(candidates) < config.SINGLE_PUBLISHER_MIN_CANDIDATES:
-        return True, (
-            f"only {len(candidates)} candidate(s), all from a single publisher "
-            f"({candidates[0].publisher or candidates[0].publisher_key()})"
-        )
+    # A thin-but-real result is a pass: one independently verified download beats escalating
+    # to an expensive critic call, so candidate COUNT is deliberately not a gate condition.
     return False, ""
 
 
@@ -72,11 +74,11 @@ def run_critic(
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
     found = (
         "\n".join(
-            f"- {c.url} [{c.source}, publisher: {c.publisher or 'unknown'}, "
-            f"resource: {c.resource_url or 'none identified'}] {c.title}"
+            f"- {c.url} [{c.source}, resource: {c.resource_url or 'none identified'}] "
+            f"{c.title}"
             for c in candidates
         )
-        or "(nothing survived triage)"
+        or "(no angle resolved to a verified download)"
     )
     data = chat_json(
         config.CRITIC_MODEL,
@@ -86,7 +88,7 @@ def run_critic(
                 "role": "user",
                 "content": (
                     f"Country: {country}\nUse case: {use_case}\n\n"
-                    f"Angles tried:\n{tried}\n\nWhat triage produced:\n{found}\n\n"
+                    f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
                     f"Why this was escalated: {gate_reason}"
                 ),
             },

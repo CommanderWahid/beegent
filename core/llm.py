@@ -7,10 +7,12 @@ Both supported backends speak the OpenAI wire format: Ollama exposes it at
 """
 
 import json
+import re
 
 from openai import BadRequestError, OpenAI
 
 from core import config
+from core.schemas import TokenUsage
 
 
 def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
@@ -56,13 +58,14 @@ def _create(model: str, messages: list[dict], **kwargs):
         return client.chat.completions.create(model=model, messages=messages, **kwargs)
 
 
-def _message_text(msg) -> str:
+def message_text(msg) -> str:
     """
     Flatten an assistant message's content to text.
 
     Reason: Most endpoints return a plain string, but Databricks' Claude Opus endpoint returns a list
     of content blocks. Normalizing here keeps that shape from leaking into _parse_json() and
-    every caller downstream.
+    every caller downstream - including core/pipeline/geofetch.py, which needs the raw message
+    for its tool_calls and reads the text through this.
     """
     content = getattr(msg, "content", None)
     if isinstance(content, str):
@@ -75,6 +78,14 @@ def _message_text(msg) -> str:
                 parts.append(text)
         return "".join(parts)
     return ""
+
+
+def strip_think(text: str) -> str:
+    """Remove <think>...</think> reasoning blocks (deepseek-r1, qwen3, ...).
+
+    Both Ollama defaults are reasoning models, so this is on the hot path, not an edge case.
+    """
+    return re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
 
 
 def _parse_json(raw: str) -> dict | None:
@@ -117,7 +128,7 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
             temperature=0 if attempt == 0 else 0.3,
             **kwargs,
         )
-        raw = _message_text(resp.choices[0].message)
+        raw = message_text(resp.choices[0].message)
         parsed = _parse_json(raw)
         if parsed is not None:
             return parsed
@@ -128,22 +139,33 @@ def chat_json(model: str, messages: list[dict]) -> dict | None:
     return None
 
 
-def chat_tools(model: str, messages: list[dict], tools: list[dict]):
+def chat_tools(model: str, messages: list[dict], tools: list[dict]) -> tuple:
     """
-    One tool-calling completion. Returns the assistant message.
+    One tool-calling completion. Returns (assistant_message, TokenUsage).
+
+    The usage half is what gives a run its cost meter - the geofetch agent sums it across
+    every step and core/run.py reports the total. Backends that report no usage yield a
+    zeroed TokenUsage rather than None, so callers never branch on it.
     """
     resp = _create(model, messages, tools=tools, temperature=0)
-    return resp.choices[0].message
+    raw = getattr(resp, "usage", None)
+    usage = TokenUsage(
+        prompt_tokens=getattr(raw, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(raw, "completion_tokens", 0) or 0,
+    )
+    return resp.choices[0].message, usage
 
 
 def to_message_dict(msg) -> dict:
     """
     Serialize an assistant message for the next request.
 
-    Drops Ollama's non-standard `reasoning` field so thinking models stay
-    swappable without touching the agents.
+    Drops Ollama's non-standard `reasoning` field, and strips <think> blocks from the
+    content, so thinking models stay swappable without touching the agents. Both matter for
+    kept history specifically: a reasoning block is large, useful only in the moment, and
+    left in place it crowds out the system prompt on a small context window.
     """
-    out: dict = {"role": "assistant", "content": _message_text(msg)}
+    out: dict = {"role": "assistant", "content": strip_think(message_text(msg))}
     if msg.tool_calls:
         out["tool_calls"] = [
             {

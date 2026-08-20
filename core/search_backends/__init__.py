@@ -1,5 +1,5 @@
-"""Pluggable search/fetch backends - see base.py for the SearchBackend interface."""
+"""The web layer - one provider, imported directly by name, no pluggability layer."""
 
-from .base import FetchedPage, Link, SearchBackend, SearchHit, get_search_backend
+from .web_tools import WebTools, normalize_url
 
-__all__ = ["SearchBackend", "SearchHit", "FetchedPage", "Link", "get_search_backend"]
+__all__ = ["WebTools", "normalize_url"]
