@@ -545,26 +545,39 @@ def resolve_angle(
     try:
         raw_hits = tools.web_search(query).get("results", [])
     except Exception as exc:
-        log(f"    [geofetch] seed search failed: {exc}")
+        log(f"    [geofetch] seed search failed: {exc} "
+            f"(wanted {angle.dataset or angle.description!r} as {angle.format or 'any'})")
         return None, None
     # A malformed hit would take the whole angle down at the very first line; drop instead.
     hits = [h for h in raw_hits
             if isinstance(h, dict) and str(h.get("url", "")).startswith("http")]
     if not hits:
-        log("    [geofetch] seed search returned nothing")
+        # No start URL means the agent never runs, so the task values would otherwise never
+        # be logged at all - say what was wanted, or a blocked search looks like a no-op.
+        log(f"    [geofetch] seed search returned nothing for {query!r} "
+            f"(wanted {angle.dataset or angle.description!r} as {angle.format or 'any'})")
         return None, None
 
     start_url = hits[0]["url"]
     start_title = hits[0].get("title") or start_url
-    log(f"    [geofetch] start: {start_url}")
 
     agent = GeofetchAgent(tools=tools, log=log)
     for hit in hits:
         agent._discovered.add(normalize_url(hit["url"]))
 
+    dataset = angle.dataset or angle.description
+    # The four values the agent is actually started with - log them together, at the point
+    # of use, so a surprising result can be read back against the task that produced it
+    # rather than reconstructed from the planner's output three stages upstream.
+    log(f"    [geofetch] task: url      = {start_url}")
+    log(f"    [geofetch]       dataset  = {dataset!r}")
+    log(f"    [geofetch]       format   = {angle.format!r}"
+        f"{' (any - magic-byte check disarmed)' if not angle.format else ''}")
+    log(f"    [geofetch]       vintage  = {angle.vintage!r}")
+
     result = agent.run(
         start_url=start_url,
-        dataset=angle.dataset or angle.description,
+        dataset=dataset,
         fmt=angle.format,
         vintage=angle.vintage,
         seed_hits=hits,

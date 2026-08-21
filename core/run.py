@@ -87,7 +87,6 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         misses: list[Candidate] = []
         for i, angle in enumerate(angles, 1):
             print(f"[geofetch] angle {i}/{len(angles)}: {angle.description}")
-            print(f"    [geofetch] want: {angle.dataset} [{angle.format or 'any format'}]")
             try:
                 found, missed = resolve_angle(country, angle)
             except Exception as exc:  # one bad angle must not kill the run
