@@ -33,10 +33,10 @@ gap-closing step, not a polished system.
 ```mermaid
 flowchart TD
     IN["python -m core.run<br/>--country --use-case"]
-    PLAN["planner · 1 LLM call<br/>use case into 1..5 SearchAngles<br/>each one = dataset + format + vintage"]
+    PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one = dataset + format + vintage"]
     CAT["catalog workers<br/>deliberately an empty stub"]
     GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each<br/>see the detailed diagram below"]
-    RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 5"]
+    RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
     GATE{"escalation gate · no LLM<br/>nothing verified at all?<br/>more dead ends than wins?"}
     CRITIC["critic · 1 LLM call<br/>replan or needs_human_review"]
     UNRES["unresolved[]<br/>claim.failure_reason + cost"]
@@ -123,13 +123,13 @@ passes provenance and is caught by the probe. Each covers the other's blind spot
 | | per unit | worst case per run |
 |---|---|---|
 | planner | 1 LLM call | 2 |
-| geofetch | ≤20 LLM calls, ≤50 HTTP requests **per angle** | 5 angles × 2 iterations = **200 LLM calls** |
+| geofetch | ≤20 LLM calls, ≤50 HTTP requests **per angle** | 3 angles × 2 iterations = **120 LLM calls** |
 | critic | 1 LLM call | 1 |
 
 Worth knowing before pointing this at a paid endpoint. `MAX_ANGLES` (`core/config.py`) is the
-main lever. In practice runs land far below the ceiling — most angles finish in 10–15 steps or
-fail early — and `run.totals` reports what a run *actually* spent, with each candidate's `cost`
-block attributing it per angle.
+main lever. Most angles finish well short of the cap or fail early, so a real run costs less
+than the ceiling — but do not budget on that. `run.totals` reports what a run *actually* spent,
+and each candidate's `cost` block attributes it per angle.
 
 ## Usage
 
@@ -150,7 +150,7 @@ cheaper and more general than driving a UI.
 
 ```bash
 ollama pull deepseek-r1:14b   # planner, critic
-ollama pull qwen3:14b         # geofetch - the tool-calling agent
+ollama pull qwen3:8b          # geofetch - the tool-calling agent
 ```
 
 Give local models room: tool results are verbose and Ollama's default context is small.
@@ -238,7 +238,7 @@ The run object also carries `backend`, `models`, and `totals` for the whole run.
 uv run python -m unittest discover -s tests -v
 ```
 
-56 tests, fully offline — no network, no API key, no LLM. The agent loop is exercised by a
+59 tests, fully offline — no network, no API key, no LLM. The agent loop is exercised by a
 scripted fake model navigating a synthetic portal for a fictional country, which is also
 what proves no real portal is hardcoded anywhere. Coverage includes every guardrail in the
 chain above: an invented URL, a wrong-format file, a premature give-up, a repeated call, and

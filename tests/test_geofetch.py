@@ -136,14 +136,20 @@ class FakeLLM:
     """Scripted stand-in for core.llm.chat_tools: pops one (message, usage) pair per call
     and records the message history it was handed."""
 
-    def __init__(self, turns):
+    def __init__(self, turns, raise_on=None, error=None):
         self.turns = list(turns)
         self.seen_messages = []
         self.chat_calls = 0
+        # raise_on: 1-based call number that should blow up instead of returning a turn,
+        # standing in for a rate limit or a timeout that outlived the SDK's own retries.
+        self.raise_on = raise_on
+        self.error = error or RuntimeError("boom")
 
     def __call__(self, model, messages, tools):
         self.seen_messages = messages
         self.chat_calls += 1
+        if self.raise_on is not None and self.chat_calls >= self.raise_on:
+            raise self.error
         if not self.turns:
             raise AssertionError("FakeLLM script exhausted")
         return self.turns.pop(0), TokenUsage(prompt_tokens=100, completion_tokens=20)
@@ -534,9 +540,9 @@ SEED_HITS = {"results": [{"title": "Atlantis Geoportal - LANDCOVER", "url": PORT
                          {"title": "Atlantis DL service", "url": FEED}]}
 
 
-def run_stage(turns, seed=None, angle=ANGLE):
+def run_stage(turns, seed=None, angle=ANGLE, raise_on=None, error=None):
     """Drive resolve_angle() with a scripted LLM and a scripted seed search."""
-    llm = FakeLLM(turns)
+    llm = FakeLLM(turns, raise_on=raise_on, error=error)
     tools = make_tools()
     tools.web_search = lambda q: (SEED_HITS if seed is None else seed)
     with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
@@ -623,6 +629,37 @@ class TestResolveAngle(unittest.TestCase):
         self.assertGreater(missed.cost["steps_used"], 0)
         self.assertIn("total_tokens", missed.cost)
 
+    def test_llm_transport_error_becomes_an_unresolved_record(self):
+        """A rate limit or timeout that outlives the SDK's retries must not vaporize the
+        angle. The one most likely to be throttled is the one you most need to see."""
+        import openai
+        import httpx
+
+        cases = [
+            openai.APITimeoutError(request=httpx.Request("POST", "http://x")),
+            openai.RateLimitError(
+                "429 rate limit exceeded",
+                response=httpx.Response(429, request=httpx.Request("POST", "http://x")),
+                body=None),
+        ]
+        for err in cases:
+            with self.subTest(error=type(err).__name__):
+                found, missed = run_stage(list(HAPPY_PATH), raise_on=3, error=err)
+                self.assertIsNone(found)
+                self.assertIsNotNone(missed, "the angle vanished instead of failing soft")
+                self.assertIn("agent aborted", missed.claim["failure_reason"])
+                self.assertIn(type(err).__name__, missed.claim["failure_reason"])
+                # it must still report what it spent before dying
+                self.assertEqual(missed.cost["steps_used"], 3)
+                self.assertGreater(missed.cost["total_tokens"], 0)
+                self.assertGreater(missed.cost["http_requests"], 0)
+
+    def test_transport_error_on_the_very_first_call_still_records(self):
+        found, missed = run_stage([], raise_on=1, error=RuntimeError("connection refused"))
+        self.assertIsNone(found)
+        self.assertIn("connection refused", missed.claim["failure_reason"])
+        self.assertEqual(missed.cost["steps_used"], 1)
+
     def test_empty_seed_search_yields_nothing_at_all(self):
         found, missed = run_stage(list(HAPPY_PATH), seed={"results": []})
         self.assertIsNone(found)
@@ -699,6 +736,41 @@ class TestEscalationGate(unittest.TestCase):
         escalate, reason = needs_escalation([_cand("https://a.example/p", None)], [])
         self.assertTrue(escalate)
         self.assertIn("fetchable resource endpoint", reason)
+
+
+class TestThrottledAngleReachesTheOutput(unittest.TestCase):
+    """The regression that motivated failing soft: before this, an angle whose LLM call
+    errored left no trace at all in candidate_list.json - no unresolved entry, no cost."""
+
+    def test_discover_records_the_failed_angle(self):
+        from core import run as runmod
+
+        good = SearchAngle("good", "web_search", "r", dataset="d", format="GeoParquet")
+        bad = SearchAngle("throttled", "web_search", "r", dataset="d", format="GeoPackage")
+
+        def fake_resolve(country, angle):
+            if angle.format == "GeoParquet":
+                return _cand("https://ok.example/p", "https://ok.example/f.parquet"), None
+            # what resolve_angle now returns when the agent aborts mid-loop
+            return None, Candidate(
+                url="https://slow.example/p", title="T", source="geofetch",
+                claim={"failure_reason": "agent aborted: RateLimitError: 429"},
+                cost={"steps_used": 3, "http_requests": 2, "prompt_tokens": 300,
+                      "completion_tokens": 60, "total_tokens": 360})
+
+        with mock.patch.object(runmod, "plan", lambda c, u, f=None: [good, bad]), \
+             mock.patch.object(runmod, "resolve_angle", fake_resolve), \
+             mock.patch.object(runmod, "run_critic",
+                               lambda *a: {"decision": "needs_human_review", "note": "n"}):
+            run = runmod.discover("Atlantis", "land cover")
+
+        out = run.to_dict()
+        self.assertEqual(len(out["candidates"]), 1)
+        self.assertEqual(len(out["unresolved"]), 1, "the throttled angle vanished")
+        self.assertIn("429", out["unresolved"][0]["claim"]["failure_reason"])
+        # and its spend is still attributed in the run totals
+        self.assertEqual(out["totals"]["total_tokens"], 360)
+        self.assertEqual(out["totals"]["angles_run"], 2)
 
 
 class TestRank(unittest.TestCase):

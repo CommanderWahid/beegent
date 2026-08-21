@@ -219,6 +219,13 @@ class GeofetchAgent:
 
     def run(self, start_url: str, dataset: str, fmt: str,
             vintage: str = "latest", seed_hits: list[dict] | None = None) -> AgentResult:
+        """Drive the agent to a verified download, or to an honest failure.
+
+        Never raises: a tool crash becomes a tool result the model can react to, and an LLM
+        transport error (rate limit, timeout past the SDK's retries) becomes a failed
+        AgentResult carrying the steps and tokens already spent. Callers get a result object
+        in every case, so nothing an angle did can vanish from the run's accounting.
+        """
         task = {"start_url": start_url, "dataset": dataset,
                 "format": fmt, "vintage": vintage}
         self._task_json = json.dumps(task)
@@ -245,7 +252,20 @@ class GeofetchAgent:
         for step in range(1, self.max_steps + 1):
             result.steps_used = step
             _compact_history(messages)
-            msg, usage = chat_tools(config.GEOFETCH_MODEL, messages, TOOL_SCHEMAS)
+            try:
+                msg, usage = chat_tools(config.GEOFETCH_MODEL, messages, TOOL_SCHEMAS)
+            except Exception as exc:
+                # The LLM call is the one thing in this loop that can still raise - tool
+                # crashes are already caught in _dispatch(). A rate limit or a timeout that
+                # outlives the SDK's retries must degrade to an honest failure carrying the
+                # cost spent so far, not blow the angle away with no record: the angle most
+                # likely to be throttled is exactly the one you need to see in the output.
+                self.log(f"[step {step}] aborted: {type(exc).__name__}: {exc}")
+                result.report = {
+                    "found": False,
+                    "failure_reason": f"agent aborted: {type(exc).__name__}: {exc}",
+                }
+                return result
             result.usage.add(usage)
             messages.append(to_message_dict(msg))
             content = message_text(msg)

@@ -21,6 +21,7 @@ def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
             base_url=config.OLLAMA_BASE_URL,
             api_key="ollama",  # placeholder, unused by Ollama
             timeout=config.LLM_TIMEOUT,
+            max_retries=config.LLM_MAX_RETRIES,
         )
     if backend == "databricks":
         # DATABRICKS_HOST may be a bare hostname or the full https://...  URL as shown in
@@ -32,6 +33,7 @@ def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
             base_url=f"https://{host}/serving-endpoints",
             api_key=config.DATABRICKS_TOKEN,
             timeout=config.LLM_TIMEOUT,
+            max_retries=config.LLM_MAX_RETRIES,
         )
     raise ValueError(f"unknown LLM_BACKEND: {backend!r}")
 

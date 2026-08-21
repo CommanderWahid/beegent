@@ -18,11 +18,12 @@ LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
 _DEFAULT_MODELS = {
     "ollama": {  # Local setup (RTX 4070 Laptop, 8GB)
         "PLANNER_MODEL": "deepseek-r1:14b",
-        "GEOFETCH_MODEL": "qwen3:14b",  # qwen3 has the most reliable tool calling under
-                                        # Ollama; deepseek-r1 does not. Note ~9GB at Q4 on
-                                        # an 8GB card - it will spill to CPU and run slower
-                                        # per step than the 8b, which is the trade for a
-                                        # model that actually converges instead of looping.
+        "GEOFETCH_MODEL": "qwen3:8b",  # qwen3 has the most reliable tool calling under
+                                       # Ollama; deepseek-r1 does not. 8b (~5.2GB) fits an
+                                       # 8GB card with room left for a 16k context. Do not
+                                       # "upgrade" this to qwen3:14b - it was tried and
+                                       # measured at ~10GB resident, 39% spilled to CPU,
+                                       # and it blew past LLM_TIMEOUT on a single call.
         "CRITIC_MODEL": "deepseek-r1:14b",
     },
     "databricks": {  # serving-endpoint names, not bare model names - verify with
@@ -46,7 +47,7 @@ DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
 
 # --- pipeline tunables -------------------------------------------------------
 
-MAX_ANGLES = 5  # cap on planner output, and the main cost lever: every angle is a
+MAX_ANGLES = 3  # cap on planner output, and the main cost lever: every angle is a
                 # full agent run (GEOFETCH_MAX_STEPS calls), not one cheap search
 MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 
@@ -80,11 +81,17 @@ PROBE_BYTES = 16  # enough for every magic signature we know
 CONFIDENCE_BY_REPORT = {"high": 0.95, "medium": 0.8, "low": 0.7}
 CONFIDENCE_DEFAULT = 0.7
 
-# Output cap. Cannot bind within one iteration now that MAX_ANGLES is 5, but still can
+# Output cap. Cannot bind within one iteration now that MAX_ANGLES is 3, but still can
 # across iterations - _rank() sees carried + fresh.
-MAX_FINAL_CANDIDATES = 5
+MAX_FINAL_CANDIDATES = 3
 
 CHAT_JSON_ATTEMPTS = 2  # a JSON-mode call that comes back unparseable gets one retry
 
 HTTP_TIMEOUT = 20
+
+# Careful with these two together: the OpenAI SDK retries 429/5xx/timeouts with exponential
+# backoff, so the worst-case wall clock for ONE completion is (LLM_MAX_RETRIES + 1) x
+# LLM_TIMEOUT - and angles run serially, so a run multiplies that again by MAX_ANGLES.
+# At the defaults below that is 4 x 180s = 12 min per call, 36 min for a fully-stuck run.
 LLM_TIMEOUT = 180
+LLM_MAX_RETRIES = 3  # one more than the SDK default, to ride out a rate-limit burst
