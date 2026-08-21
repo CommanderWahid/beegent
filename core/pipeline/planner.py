@@ -18,26 +18,39 @@ statistics rather than base geometry.
 Name concrete organizations wherever you can. An angle that names a publisher beats an
 angle that names a category.
 
+If the use case names a file format, that format is non-negotiable and goes on EVERY angle,
+even for a publisher you think does not offer it. Finding out is the downstream agent's job -
+it may convert, find a mirror, or fail honestly, and an honest failure is more useful than
+silently fetching something the user did not ask for.
+
 Decide how many angles the use case actually warrants: a narrow, well-known need may
 justify only 1-2, a broad or ambiguous one up to {max_angles}. Never exceed {max_angles}.
 
-Each angle is not just something to search for - it is a concrete FETCH TASK. A downstream
-agent will chase it all the way to a file and verify the bytes, so say what file it should
-come back with:
+Each angle is a concrete FETCH TASK, not a search query. A downstream agent is started with
+exactly the four values you give below and chases them to a file, verifying the bytes. Your
+job is to produce those four - it cannot rediscover them:
 
+  "url"     - where the agent starts: a portal dataset page, a bulk file server, or an API
+              base for this publisher. Prefer a download or file server over a homepage.
+              Being wrong is cheap - the agent fetches it, can search from there, and the
+              bytes are verified either way. An angle with no URL is discarded, so give
+              your best concrete guess rather than omitting it.
   "dataset" - the file in plain words, including its geographic extent, e.g.
               "building footprints, whole country" or "level-2 administrative boundaries".
-  "format"  - the file format to ask for. Prefer, in this order: GeoParquet, GeoPackage,
-              Shapefile, GeoJSON, CSV. Choose what this publisher plausibly offers,
-              not always the first one. Leave it empty only if the format genuinely
-              does not matter. Never ask for a documentation format (PDF, TXT, MD) -
-              those are not data.
+  "format"  - the file format to ask for. If the use case named one, use exactly that on
+              every angle - see above, it overrides everything in this paragraph. Only
+              when the use case is silent do you choose: prefer, in this order,
+              GeoParquet, GeoPackage, Shapefile, GeoJSON, CSV, picking what this
+              publisher plausibly offers rather than always the first. Leave it empty
+              only if the format genuinely does not matter. Never ask for a
+              documentation format (PDF, TXT, MD) - those are not data.
   "vintage" - "latest" unless the use case names a specific year/edition.
 
 Reply with JSON only:
 {{"angles": [{{"description": "<what to search for, phrased as a search intent>",
               "channel_hint": "catalog" | "web_search" | "national_geoportal",
               "rationale": "<one sentence on why this route is worth trying>",
+              "url": "https://<host>/<path>",
               "dataset": "<the file wanted, with its extent>",
               "format": "<GeoParquet | GeoPackage | Shapefile | GeoJSON | CSV, or empty>",
               "vintage": "latest"}}]}}"""
@@ -62,29 +75,27 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
 
     angles: list[SearchAngle] = []
     for raw in (data or {}).get("angles", [])[: config.MAX_ANGLES]:
-        if isinstance(raw, dict) and raw.get("description"):
-            angles.append(
-                SearchAngle(
-                    description=str(raw["description"]),
-                    channel_hint=str(raw.get("channel_hint", "web_search")),
-                    rationale=str(raw.get("rationale", "")),
-                    # A missing spec must not lose the angle: description is a usable
-                    # dataset description, and "" format falls back to a liveness check.
-                    dataset=str(raw.get("dataset") or raw["description"]),
-                    format=str(raw.get("format") or ""),
-                    vintage=str(raw.get("vintage") or "latest"),
-                )
-            )
-
-    if not angles:  # fallback so a bad planner call can't kill the run
-        angles = [
+        if not (isinstance(raw, dict) and raw.get("description")):
+            continue
+        url = str(raw.get("url") or "").strip()
+        if not url.startswith("http"):
+            # Without a start URL there is no fetch task, so the angle is dropped rather
+            # than half-built. If every angle is dropped, plan() returns [] and the run
+            # escalates to the critic - that is the machinery working, not a gap, and it
+            # beats inventing a generic angle that has nowhere to start.
+            print(f"  [plan] dropping angle with no usable url: {raw['description'][:60]}")
+            continue
+        angles.append(
             SearchAngle(
-                description=f"{use_case} data for {country}",
-                channel_hint="web_search",
-                rationale="fallback: planner returned nothing usable",
-                dataset=f"{use_case} for {country}",
-                format="",
-                vintage="latest",
+                description=str(raw["description"]),
+                channel_hint=str(raw.get("channel_hint", "web_search")),
+                rationale=str(raw.get("rationale", "")),
+                url=url,
+                # A missing spec must not lose the angle: description is a usable dataset
+                # description, and "" format falls back to a liveness check.
+                dataset=str(raw.get("dataset") or raw["description"]),
+                format=str(raw.get("format") or ""),
+                vintage=str(raw.get("vintage") or "latest"),
             )
-        ]
+        )
     return angles

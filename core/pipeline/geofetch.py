@@ -162,13 +162,21 @@ TOOL_SCHEMAS = [
 TOOL_NAMES = {"fetch_page", "probe_url", "web_search", "report_result"}
 
 # Requested-format -> acceptable probe payload types (magic-byte classes).
-# Shapefile/GeoPackage/GeoTIFF are commonly shipped zipped, hence "zip".
+# Bulk geodata is routinely shipped inside a container: IGN publishes national GeoPackage as
+# split .7z.001 archives, Shapefile is almost always zipped, GeoTIFF is often gzipped. `zip`
+# was already accepted here on exactly that reasoning; _ARCHIVES just makes the rule complete
+# and consistent instead of accidentally zip-only.
+#
+# GeoParquet is deliberately NOT loosened: Parquet is not archive-shipped, and admitting
+# containers there would let any zip satisfy the format most often asked for - which is the
+# one place this guardrail earns its keep.
+_ARCHIVES = {"zip", "7z", "gzip"}
 FORMAT_PAYLOADS = {
     "geoparquet": {"parquet"}, "parquet": {"parquet"},
-    "shapefile": {"zip"}, "shp": {"zip"},
-    "geopackage": {"sqlite/geopackage", "zip"},
-    "gpkg": {"sqlite/geopackage", "zip"},
-    "geotiff": {"tiff/geotiff", "zip"}, "tiff": {"tiff/geotiff", "zip"},
+    "shapefile": set(_ARCHIVES), "shp": set(_ARCHIVES),
+    "geopackage": {"sqlite/geopackage"} | _ARCHIVES,
+    "gpkg": {"sqlite/geopackage"} | _ARCHIVES,
+    "geotiff": {"tiff/geotiff"} | _ARCHIVES, "tiff": {"tiff/geotiff"} | _ARCHIVES,
     "pdf": {"pdf"},
 }
 TEXT_FORMATS = {"csv", "json", "geojson", "xml", "gml", "kml", "wkt", "txt"}
@@ -218,7 +226,7 @@ class GeofetchAgent:
     # -- main loop ---------------------------------------------------------- #
 
     def run(self, start_url: str, dataset: str, fmt: str,
-            vintage: str = "latest", seed_hits: list[dict] | None = None) -> AgentResult:
+            vintage: str = "latest") -> AgentResult:
         """Drive the agent to a verified download, or to an honest failure.
 
         Never raises: a tool crash becomes a tool result the model can react to, and an LLM
@@ -233,16 +241,6 @@ class GeofetchAgent:
         self._discovered.add(normalize_url(start_url))
         self._call_seen: dict[str, int] = {}  # exact call -> first step it ran at
         user = "Resolve this download URL:\n" + json.dumps(task, indent=2)
-        if seed_hits:
-            # The caller already spent a search to find start_url. Show the rest of the
-            # hits rather than making the agent re-run an equivalent query: they are the
-            # same results it would get back, and they are already in _discovered, so the
-            # provenance guard would accept one it was never shown - which is worse.
-            listed = "\n".join(f"- {h.get('title') or h['url']}: {h['url']}"
-                                for h in seed_hits[:8])
-            user += ("\n\nA web search for this dataset has already been run. Its results "
-                     f"(start_url is the first):\n{listed}\n"
-                     "Use these as leads; only call web_search if you need a different query.")
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user},
@@ -305,7 +303,7 @@ class GeofetchAgent:
                 self._harvest(payload)
                 messages.append({"role": "user", "content":
                                  f"Result of your {name} call (you wrote it as plain "
-                                 "text - emit REAL tool calls next time): " + payload})
+                                 "text - emit REAL tool calls next time): " + _fit(payload)})
                 continue
 
             for call in tool_calls:
@@ -349,9 +347,9 @@ class GeofetchAgent:
 
                 tool_result = self._dispatch(name, args)
                 payload = json.dumps(tool_result)
-                self._harvest(payload)
+                self._harvest(payload)  # harvest URLs from the FULL payload, then truncate
                 messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": payload})
+                                 "content": _fit(payload)})
 
         result.report = {"found": False,
                          "failure_reason": f"step budget ({self.max_steps}) exhausted"}
@@ -422,6 +420,21 @@ def _finish(result: AgentResult, outcome: dict, args: dict) -> AgentResult:
     result.verification = outcome.get("verification", {})
     return result
 
+
+
+def _fit(payload: str) -> str:
+    """Cap one tool result before it enters the conversation.
+
+    Every kept result is resent on every subsequent step, so an uncapped one is not a one-off
+    cost - it is a per-step tax for the rest of the angle. A single 60KB WFS GetCapabilities
+    once drove one angle to 861k input tokens and tripped a workspace rate limit, starving
+    every angle after it. The marker matters: the model has to know it was cut so it can
+    re-fetch something narrower instead of concluding the document ends there.
+    """
+    if len(payload) <= config.TOOL_RESULT_MAX_CHARS:
+        return payload
+    return payload[: config.TOOL_RESULT_MAX_CHARS] + (
+        " ...[result truncated - refetch a narrower path or a specific page for more]")
 
 
 def _compact_history(messages: list) -> None:
@@ -525,7 +538,7 @@ def _cost(result: AgentResult, tools: WebTools) -> dict:
 
 
 def resolve_angle(
-    country: str, angle: SearchAngle, log: Callable[[str], None] = print,
+    angle: SearchAngle, log: Callable[[str], None] = print,
 ) -> tuple[Candidate | None, Candidate | None]:
     """Resolve one search angle into a verified candidate.
 
@@ -537,33 +550,8 @@ def resolve_angle(
     spent). Only `verified` carries `verification` - there is nothing to verify on a miss.
     """
     tools = WebTools(log=log)
-
-    # A SearchAngle has no URL, but the methodology starts at one. Spend one search to get
-    # a concrete recon target, and seed provenance with every hit so the agent may report
-    # any of them without tripping the invented-URL guard.
-    query = f"{angle.dataset or angle.description} {country}"
-    try:
-        raw_hits = tools.web_search(query).get("results", [])
-    except Exception as exc:
-        log(f"    [geofetch] seed search failed: {exc} "
-            f"(wanted {angle.dataset or angle.description!r} as {angle.format or 'any'})")
-        return None, None
-    # A malformed hit would take the whole angle down at the very first line; drop instead.
-    hits = [h for h in raw_hits
-            if isinstance(h, dict) and str(h.get("url", "")).startswith("http")]
-    if not hits:
-        # No start URL means the agent never runs, so the task values would otherwise never
-        # be logged at all - say what was wanted, or a blocked search looks like a no-op.
-        log(f"    [geofetch] seed search returned nothing for {query!r} "
-            f"(wanted {angle.dataset or angle.description!r} as {angle.format or 'any'})")
-        return None, None
-
-    start_url = hits[0]["url"]
-    start_title = hits[0].get("title") or start_url
-
     agent = GeofetchAgent(tools=tools, log=log)
-    for hit in hits:
-        agent._discovered.add(normalize_url(hit["url"]))
+    start_url = angle.url
 
     dataset = angle.dataset or angle.description
     # The four values the agent is actually started with - log them together, at the point
@@ -580,7 +568,6 @@ def resolve_angle(
         dataset=dataset,
         fmt=angle.format,
         vintage=angle.vintage,
-        seed_hits=hits,
     )
     report = result.report or {}
     log(
@@ -601,7 +588,7 @@ def resolve_angle(
         claim.setdefault("failure_reason", "no verifiable download found")
         return None, Candidate(
             url=start_url,
-            title=start_title,
+            title=angle.url,
             source="geofetch",
             confidence=None,
             resource_url=None,
@@ -612,7 +599,7 @@ def resolve_angle(
     return (
         Candidate(
             url=start_url,  # the page we cite; resource_url is the endpoint that serves data
-            title=start_title,  # the page's title - the edition lives in claim.edition
+            title=angle.url,  # what we cite; the edition lives in claim.edition
             source="geofetch",
             confidence=config.CONFIDENCE_BY_REPORT.get(
                 str(report.get("confidence", "")).lower(), config.CONFIDENCE_DEFAULT

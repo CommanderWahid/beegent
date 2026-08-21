@@ -33,7 +33,7 @@ gap-closing step, not a polished system.
 ```mermaid
 flowchart TD
     IN["python -m core.run<br/>--country --use-case"]
-    PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one = dataset + format + vintage"]
+    PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one IS the fetcher's 4 params:<br/>url + dataset + format + vintage"]
     CAT["catalog workers<br/>deliberately an empty stub"]
     GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each<br/>see the detailed diagram below"]
     RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
@@ -56,8 +56,9 @@ flowchart TD
     CRITIC -->|needs_human_review| OUT
 ```
 
-An **angle is a fetch order, not a search query**: the planner decides *which dataset, in
-which format, of which vintage*, and a downstream agent chases it all the way to a file. The
+An **angle is a fetch order, not a search query**: the planner decides *where to start, which
+dataset, in which format, of which vintage* — the four values the agent is started with, so
+nothing downstream has to rediscover any of them. A downstream agent chases it to a file. The
 catalog-worker stage is a deliberate stub — the catalog layer is unbuilt. Re-planning **adds**
 to the pool rather than restarting it, so a candidate verified in iteration 1 carries forward
 and wins any dedupe collision against a re-found duplicate.
@@ -66,8 +67,7 @@ and wins any dedupe collision against a re-found duplicate.
 
 ```mermaid
 flowchart TD
-    ANGLE["SearchAngle<br/>dataset + format + vintage"]
-    SEED["seed search · 1 request<br/>start_url = top hit<br/>every hit pre-seeded into _discovered"]
+    ANGLE["SearchAngle from the planner<br/>url + dataset + format + vintage"]
 
     subgraph AGENT["agent loop - up to GEOFETCH_MAX_STEPS (20)"]
         LLM["chat_tools() · generic methodology prompt:<br/>recon, search early, platform API conventions,<br/>mine urls_found, compare vintages, never invent URLs"]
@@ -87,7 +87,7 @@ flowchart TD
         ANTILOOP -->|new| T3 --> LLM
     end
 
-    ANGLE --> SEED --> LLM
+    ANGLE --> LLM
 
     WEB["the open web<br/>portals, catalogues, APIs<br/>Atom, DCAT, CKAN, udata, GeoNetwork, STAC, OGC"]
     T1 --- WEB

@@ -25,12 +25,13 @@ class SearchAngle:
     description: str  # e.g. "national statistics office boundary data"
     channel_hint: str  # "catalog" | "web_search" | "national_geoportal"
     rationale: str
-    # The geofetch spec for this angle, filled in by the planner. An angle is not just a
-    # thing to search for, it is a concrete fetch task: which dataset, in which format, of
-    # which vintage. `format` in particular arms geofetch's magic-byte guardrail - "" means
-    # "any", which falls back to a plain liveness check.
+    # These four ARE the fetcher's parameters - one per GeofetchAgent.run() argument. The
+    # planner's whole job is to map (country, use_case) into them, so nothing downstream has
+    # to rediscover any of it. An angle missing `url` is not a fetch task and is dropped.
+    url: str = ""  # where to start: a dataset page, bulk file server, or API base
     dataset: str = ""  # free-text description of the file wanted
-    format: str = ""  # "GeoParquet" | "GeoPackage" | "Shapefile" | ... | "" = any
+    format: str = ""  # "GeoParquet" | "GeoPackage" | ... | "" = any, which disarms the
+    # magic-byte guardrail down to a plain liveness check
     vintage: str = "latest"  # "latest", or a date/year/version
 
 

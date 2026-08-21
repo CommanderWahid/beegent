@@ -415,8 +415,9 @@ class TestAgentLoop(unittest.TestCase):
             messages.append({"role": "tool", "tool_call_id": str(i), "content": long})
         _compact_history(messages)
         tool_msgs = [m for m in messages if m["role"] == "tool"]
-        self.assertTrue(all("trimmed" in m["content"] for m in tool_msgs[:3]))
-        self.assertTrue(all(m["content"] == long for m in tool_msgs[3:]))
+        keep = config.KEEP_FULL_TOOL_RESULTS  # derive, so retuning config cannot break this
+        self.assertTrue(all("trimmed" in m["content"] for m in tool_msgs[:-keep]))
+        self.assertTrue(all(m["content"] == long for m in tool_msgs[-keep:]))
         self.assertEqual(messages[0]["content"], long)  # system untouched
         self.assertEqual(messages[1]["content"], long)  # task untouched
         self.assertTrue(all("trimmed" in m["content"]
@@ -531,23 +532,20 @@ ANGLE = SearchAngle(
     description="Atlantis national mapping agency land cover",
     channel_hint="national_geoportal",
     rationale="the authoritative producer",
+    url=PORTAL,
     dataset="Atlantis land cover, forest layer, whole country",
     format="GeoParquet",
     vintage="latest",
 )
 
-SEED_HITS = {"results": [{"title": "Atlantis Geoportal - LANDCOVER", "url": PORTAL},
-                         {"title": "Atlantis DL service", "url": FEED}]}
 
-
-def run_stage(turns, seed=None, angle=ANGLE, raise_on=None, error=None):
-    """Drive resolve_angle() with a scripted LLM and a scripted seed search."""
+def run_stage(turns, angle=ANGLE, raise_on=None, error=None):
+    """Drive resolve_angle() with a scripted LLM. No search stub: the angle carries the URL."""
     llm = FakeLLM(turns, raise_on=raise_on, error=error)
     tools = make_tools()
-    tools.web_search = lambda q: (SEED_HITS if seed is None else seed)
     with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
          mock.patch("core.pipeline.geofetch.chat_tools", llm):
-        return resolve_angle("Atlantis", angle, log=lambda m: None)
+        return resolve_angle(angle, log=lambda m: None)
 
 
 class TestResolveAngle(unittest.TestCase):
@@ -561,7 +559,7 @@ class TestResolveAngle(unittest.TestCase):
         self.assertEqual(found.verification["first_bytes_hex"][:8], "50415231")  # PAR1
         self.assertEqual(found.source, "geofetch")
         self.assertEqual(found.confidence, config.CONFIDENCE_BY_REPORT["high"])
-        self.assertEqual(found.title, "Atlantis Geoportal - LANDCOVER")  # page, not edition
+        self.assertEqual(found.title, ANGLE.url)  # the cited page, not the edition
 
     def test_claim_carries_the_models_own_account_structurally(self):
         found, _ = run_stage(list(HAPPY_PATH))
@@ -660,44 +658,95 @@ class TestResolveAngle(unittest.TestCase):
         self.assertIn("connection refused", missed.claim["failure_reason"])
         self.assertEqual(missed.cost["steps_used"], 1)
 
-    def test_empty_seed_search_yields_nothing_at_all(self):
-        found, missed = run_stage(list(HAPPY_PATH), seed={"results": []})
-        self.assertIsNone(found)
-        self.assertIsNone(missed)
-
-    def test_malformed_seed_hits_are_dropped_not_fatal(self):
-        """A hit with no usable url must not take the whole angle down on line one."""
-        seed = {"results": [{"title": "junk"}, "not-a-dict",
-                            {"title": "ok", "url": PORTAL}]}
-        found, _ = run_stage(list(HAPPY_PATH), seed=seed)
-        self.assertIsNotNone(found)
-        self.assertEqual(found.url, PORTAL)
-
-    def test_seed_hits_are_shown_to_the_model(self):
-        """The caller already paid for a search; its results go into the task message so
-        the agent uses them as leads instead of re-running an equivalent query."""
+    def test_the_angles_url_is_what_the_agent_is_started_with(self):
+        """The planner's four values reach the agent verbatim - nothing is rediscovered."""
         llm = FakeLLM(list(HAPPY_PATH))
         tools = make_tools()
-        tools.web_search = lambda q: SEED_HITS
         with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
              mock.patch("core.pipeline.geofetch.chat_tools", llm):
-            resolve_angle("Atlantis", ANGLE, log=lambda m: None)
-        task_msg = llm.seen_messages[1]["content"]
-        self.assertIn(FEED, task_msg)
-        self.assertIn("Atlantis DL service", task_msg)
+            resolve_angle(ANGLE, log=lambda m: None)
+        task = json.loads(llm.seen_messages[1]["content"].split("\n", 1)[1])
+        self.assertEqual(task, {"start_url": ANGLE.url, "dataset": ANGLE.dataset,
+                                "format": ANGLE.format, "vintage": ANGLE.vintage})
 
-    def test_seed_hits_are_pre_seeded_into_provenance(self):
-        """A URL from the seed search may be reported without being re-fetched - it did
-        appear in a tool result, just an earlier one."""
-        turns = [tool_turn("fetch_page", {"url": ED_2025}),
-                 tool_turn("report_result", {**GOOD_REPORT, "download_url": FILE_URL})]
-        found, _ = run_stage(turns)
-        self.assertIsNotNone(found)
+    def test_no_search_is_spent_before_the_agent_runs(self):
+        """The pre-flight seed search is gone: a blocked engine can no longer kill an angle
+        before it starts. web_search survives as a TOOL the agent may call itself."""
+        from core.pipeline.geofetch import TOOL_SCHEMAS
+        llm = FakeLLM(list(HAPPY_PATH))
+        tools = make_tools()
+        calls = []
+        tools.web_search = lambda q: calls.append(q) or {"results": []}
+        with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
+             mock.patch("core.pipeline.geofetch.chat_tools", llm):
+            found, _ = run_stage(list(HAPPY_PATH))
+        self.assertEqual(calls, [], "resolve_angle still ran a pre-flight search")
+        self.assertIn("web_search", [t["function"]["name"] for t in TOOL_SCHEMAS])
 
 
 def _cand(url, resource, conf=0.95):
     return Candidate(url=url, title="t", source="geofetch",
                      confidence=conf, resource_url=resource)
+
+
+class TestFormatContainers(unittest.TestCase):
+    """Bulk geodata ships inside containers - IGN publishes national GeoPackage as split
+    .7z.001 archives. `zip` was already accepted on that reasoning; 7z/gzip complete it."""
+
+    HEADS = {"7z": b"7z\xbc\xaf\x27\x1c" + b"\x00" * 10,
+             "zip": b"PK\x03\x04" + b"\x00" * 12,
+             "gzip": b"\x1f\x8b" + b"\x00" * 14,
+             "parquet": b"PAR1" + b"\x00" * 12}
+
+    def _verdict(self, fmt, kind):
+        body = self.HEADS[kind]
+
+        def transport(method, url, headers, max_bytes):
+            return HttpResult(206, {"content-type": "application/octet-stream",
+                                    "content-range": "bytes 0-15/999"}, body[:16], url)
+        a = GeofetchAgent(tools=WebTools(transport=transport))
+        a._task_format, a._task_json = fmt, "{}"
+        a._discovered = {"https://x.example/f"}
+        return a._handle_report({"found": True, "download_url": "https://x.example/f"})
+
+    def test_geopackage_accepts_archive_containers(self):
+        for kind in ("7z", "zip", "gzip"):
+            with self.subTest(container=kind):
+                self.assertIsNotNone(self._verdict("GeoPackage", kind))
+
+    def test_geoparquet_stays_strict(self):
+        """The one place this guardrail earns its keep: a container must NOT satisfy the
+        format that is asked for most often."""
+        self.assertIsNotNone(self._verdict("GeoParquet", "parquet"))
+        for kind in ("7z", "zip", "gzip"):
+            with self.subTest(container=kind):
+                self.assertIsNone(self._verdict("GeoParquet", kind))
+
+
+class TestToolResultCap(unittest.TestCase):
+    """Every kept tool result is resent on every step, so an uncapped one is a per-step tax.
+    A 60KB WFS GetCapabilities once drove a single angle to 861k input tokens."""
+
+    def test_oversized_result_is_capped_before_entering_history(self):
+        from core.pipeline.geofetch import _fit
+        huge = "z" * (config.TOOL_RESULT_MAX_CHARS * 5)
+        out = _fit(huge)
+        self.assertLess(len(out), config.TOOL_RESULT_MAX_CHARS + 200)
+        self.assertIn("truncated", out)  # the model must know it was cut
+
+    def test_small_result_is_untouched(self):
+        from core.pipeline.geofetch import _fit
+        self.assertEqual(_fit("small"), "small")
+
+    def test_cap_applies_in_the_agent_loop(self):
+        pages = dict(DEFAULT_PAGES)
+        pages[FEED] = (200, "application/atom+xml", "<feed>" + "q" * 80_000 + "</feed>")
+        llm = FakeLLM([tool_turn("fetch_page", {"url": FEED})] + list(HAPPY_PATH)[1:])
+        agent = GeofetchAgent(tools=make_tools(pages=pages), max_steps=6)
+        with mock.patch("core.pipeline.geofetch.chat_tools", llm):
+            agent.run(PORTAL, "d", "GeoParquet", "latest")
+        biggest = max(len(m["content"]) for m in llm.seen_messages if m.get("role") == "tool")
+        self.assertLess(biggest, config.TOOL_RESULT_MAX_CHARS + 200)
 
 
 class TestEscalationGate(unittest.TestCase):
@@ -748,7 +797,7 @@ class TestThrottledAngleReachesTheOutput(unittest.TestCase):
         good = SearchAngle("good", "web_search", "r", dataset="d", format="GeoParquet")
         bad = SearchAngle("throttled", "web_search", "r", dataset="d", format="GeoPackage")
 
-        def fake_resolve(country, angle):
+        def fake_resolve(angle):
             if angle.format == "GeoParquet":
                 return _cand("https://ok.example/p", "https://ok.example/f.parquet"), None
             # what resolve_angle now returns when the agent aborts mid-loop

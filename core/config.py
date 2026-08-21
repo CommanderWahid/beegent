@@ -63,13 +63,20 @@ GEOFETCH_MIN_EFFORT_REQUESTS = 5  # a failure report filed before this many requ
 # History compaction. Ollama silently evicts the OLDEST messages on context overflow -
 # i.e. the system prompt and the task itself - so the agent forgets what it was doing.
 # Trimming old tool results in place is what keeps a long run on-goal.
-KEEP_FULL_TOOL_RESULTS = 5  # most recent tool results kept at full length
+KEEP_FULL_TOOL_RESULTS = 3  # most recent tool results kept at full length
 TRIM_TOOL_TO = 500  # older ones truncated to this many chars
+# Hard cap on a tool result entering the conversation at all. THIS is the lever on input
+# tokens, not GEOFETCH_MAX_STEPS: every kept result is resent on every step, so one
+# 60KB WFS GetCapabilities held at full length costs ~15k tokens per step for the rest of
+# the run. An uncapped result once burned an 860k-token workspace minute on a single angle.
+TOOL_RESULT_MAX_CHARS = 8_000
 TRIM_ASSISTANT_TO = 800  # cap on a kept assistant message
 
 # --- web tools (core/search_backends/web_tools.py) ----------------------------
 
-MAX_BODY_BYTES = 60_000  # per fetched page - local-model context economy
+MAX_BODY_BYTES = 20_000  # raw XML/JSON body kept per fetched page. Capabilities
+                         # documents run far larger and are not more useful for it:
+                         # the agent is looking for a layer name or a link
 MAX_TEXT_CHARS = 4_000  # extracted HTML text kept per page
 MAX_LINKS = 80  # hyperlinks reported per page
 MAX_URLS_FOUND = 60  # entries in fetch_page()'s flat urls_found list
@@ -92,6 +99,8 @@ HTTP_TIMEOUT = 20
 # Careful with these two together: the OpenAI SDK retries 429/5xx/timeouts with exponential
 # backoff, so the worst-case wall clock for ONE completion is (LLM_MAX_RETRIES + 1) x
 # LLM_TIMEOUT - and angles run serially, so a run multiplies that again by MAX_ANGLES.
+# For token-per-minute limits the lever is TOOL_RESULT_MAX_CHARS / KEEP_FULL_TOOL_RESULTS
+# above, not the step cap: input tokens are dominated by tool results resent every step.
 # At the defaults below that is 4 x 180s = 12 min per call, 36 min for a fully-stuck run.
 LLM_TIMEOUT = 180
 LLM_MAX_RETRIES = 3  # one more than the SDK default, to ride out a rate-limit burst
