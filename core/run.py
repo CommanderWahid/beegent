@@ -109,7 +109,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         run.unresolved = misses
         carried = list(run.candidates)
 
-        escalate, gate_reason = needs_escalation(run.candidates, run.unresolved)
+        escalate, gate_reason = needs_escalation(run.candidates)
         if not escalate:
             run.status = "ok"
             run.reason = None
@@ -125,7 +125,9 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
             )
             return run
 
-        verdict = run_critic(country, use_case, angles, run.candidates, gate_reason)
+        verdict = run_critic(
+            country, use_case, angles, run.candidates, run.unresolved, gate_reason
+        )
         print(f"[critic] {verdict['decision']}: {verdict['note']}")
         if verdict["decision"] == "replan":
             feedback = verdict["note"]

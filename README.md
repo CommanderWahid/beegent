@@ -37,7 +37,7 @@ flowchart TD
     CAT["catalog workers<br/>deliberately an empty stub"]
     GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each<br/>see the detailed diagram below"]
     RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
-    GATE{"escalation gate · no LLM<br/>nothing verified at all?<br/>more dead ends than wins?"}
+    GATE{"escalation gate · no LLM<br/>nothing verified at all?"}
     CRITIC["critic · 1 LLM call<br/>replan or needs_human_review"]
     UNRES["unresolved[]<br/>claim.failure_reason + cost"]
     OUT["candidate_list.json"]

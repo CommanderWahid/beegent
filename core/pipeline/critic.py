@@ -27,14 +27,14 @@ Reply with JSON only:
 {"decision": "replan" | "needs_human_review", "note": "<one sentence>"}"""
 
 
-def needs_escalation(
-    candidates: list[Candidate], unresolved: list[Candidate] = ()
-) -> tuple[bool, str]:
+def needs_escalation(candidates: list[Candidate]) -> tuple[bool, str]:
     """
     Deterministic threshold check - cheap, no model call.
 
-    Two conditions only, both about whether the PLAN worked: nothing was verified at all, or
-    more angles dead-ended than paid off. Candidate count is deliberately not one of them.
+    ONE condition: did anything get verified at all? Neither the candidate count nor the
+    dead-end count is a gate condition - both were tried and removed. One independently
+    probed download is a good outcome even if every other angle missed, and escalating it
+    to the critic buys nothing but an expensive call.
     """
     # Total failure. `any([])` is False, so this is what catches an empty run - it is the
     # load-bearing branch, not the invariant guard it reads like. It doubles as that guard:
@@ -48,16 +48,6 @@ def needs_escalation(
             "endpoint"
         )
 
-    # More angles dead-ended than paid off: the plan itself is the problem, not this run's
-    # luck. Worth a critic call before calling the result good.
-    if len(unresolved) > len(candidates):
-        return True, (
-            f"{len(unresolved)} of {len(unresolved) + len(candidates)} angle(s) resolved "
-            "to no verifiable download"
-        )
-
-    # A thin-but-real result is a pass: one independently verified download beats escalating
-    # to an expensive critic call, so candidate COUNT is deliberately not a gate condition.
     return False, ""
 
 
@@ -66,10 +56,16 @@ def run_critic(
     use_case: str,
     angles: list[SearchAngle],
     candidates: list[Candidate],
+    unresolved: list[Candidate],
     gate_reason: str,
 ) -> dict:
     """
     Run the critic LLM to decide what to do next.
+
+    The gate only fires when nothing was verified, so `candidates` is almost always empty
+    here and `unresolved` carries the only real signal: which entry points were reached and
+    why each one yielded no file. Without it the critic is asked to name a better route while
+    being told nothing about why the last ones failed.
     """
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
     found = (
@@ -80,6 +76,13 @@ def run_critic(
         )
         or "(no angle resolved to a verified download)"
     )
+    dead = (
+        "\n".join(
+            f"- {c.url} - {c.claim.get('failure_reason', 'no reason recorded')}"
+            for c in unresolved
+        )
+        or "(none recorded)"
+    )
     data = chat_json(
         config.CRITIC_MODEL,
         [
@@ -89,6 +92,7 @@ def run_critic(
                 "content": (
                     f"Country: {country}\nUse case: {use_case}\n\n"
                     f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
+                    f"Angles that dead-ended:\n{dead}\n\n"
                     f"Why this was escalated: {gate_reason}"
                 ),
             },
