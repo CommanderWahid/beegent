@@ -66,7 +66,7 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
         )
 
     data = chat_json(
-        config.PLANNER_MODEL,
+        "planner",
         [
             {"role": "system", "content": SYSTEM.format(max_angles=config.MAX_ANGLES)},
             {"role": "user", "content": user},

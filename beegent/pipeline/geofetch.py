@@ -250,7 +250,7 @@ class GeofetchAgent:
             result.steps_used = step
             _compact_history(messages)
             try:
-                msg, usage = chat_tools(config.GEOFETCH_MODEL, messages, TOOL_SCHEMAS)
+                msg, usage = chat_tools("geofetch", messages, TOOL_SCHEMAS)
             except Exception as exc:
                 # The LLM call is the one thing in this loop that can still raise - tool
                 # crashes are already caught in _dispatch(). A rate limit or a timeout that

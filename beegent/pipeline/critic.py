@@ -2,7 +2,6 @@
 Escalation gate (deterministic) + critic agent (one rare LLM call).
 """
 
-from beegent import config
 from beegent.llm import chat_json
 from beegent.schemas import Candidate, SearchAngle
 
@@ -84,7 +83,7 @@ def run_critic(
         or "(none recorded)"
     )
     data = chat_json(
-        config.CRITIC_MODEL,
+        "critic",
         [
             {"role": "system", "content": CRITIC_SYSTEM},
             {

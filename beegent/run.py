@@ -11,9 +11,12 @@ beegent/pipeline/geofetch.py - an unverified URL cannot get here.
 
 import argparse
 import json
+import os
 import time
 
 from beegent import config
+from beegent.connectors import CONNECTORS, LLMConnector
+from beegent.llm import get_connector, select_backend
 from beegent.pipeline import (
     needs_escalation,
     plan,
@@ -48,12 +51,8 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         country=country,
         use_case=use_case,
         max_iterations=config.MAX_ITERATIONS,
-        backend=config.LLM_BACKEND,
-        models={
-            "planner": config.PLANNER_MODEL,
-            "geofetch": config.GEOFETCH_MODEL,
-            "critic": config.CRITIC_MODEL,
-        },
+        backend=get_connector().provider,
+        models={r: get_connector().model_for(r) for r in get_connector().ROLES},
         # Accumulated as angles finish, never summed from run.candidates at the end:
         # run.unresolved is replaced each iteration, so a final sum would silently
         # under-count every dead end from iteration 1.
@@ -145,12 +144,44 @@ def main() -> None:
     parser.add_argument("--country", required=True)
     parser.add_argument("--use-case", required=True, dest="use_case")
     parser.add_argument("--out", default="candidate_list.json")
+    # choices is evaluated here, not at import, so a connector registered at runtime by a
+    # wrapper script is offered too.
+    parser.add_argument("--backend", choices=sorted(CONNECTORS),
+                        help="LLM backend (default: $LLM_BACKEND, else ollama)")
+    # One flag per pipeline role, generated rather than written out, so adding a role to
+    # LLMConnector.ROLES gives it a CLI flag for free - the same way ROLES already drives
+    # the banner and DiscoveryRun.models.
+    for role in LLMConnector.ROLES:
+        parser.add_argument(f"--{role}-model", dest=f"{role}_model", metavar="NAME",
+                            help=f"model for the {role} step "
+                                 f"(default: ${role.upper()}_MODEL, else the backend's)")
     args = parser.parse_args()
 
+    # Precedence: CLI > environment > .env > the connector's DEFAULT_MODELS. The first two
+    # are applied here; load_dotenv(override=False) is what puts .env below the environment.
+    if args.backend:
+        select_backend(args.backend)
+    for role in LLMConnector.ROLES:
+        value = getattr(args, f"{role}_model")
+        if value:
+            # Deliberately the same channel model_for() already reads, so precedence lives
+            # in one place instead of being re-implemented at the CLI layer.
+            os.environ[f"{role.upper()}_MODEL"] = value
+
+    connector = get_connector()
+    # Fail before spending a run on a bad endpoint: a wrong serving-endpoint name otherwise
+    # surfaces as a 404 partway through an angle, after tokens are already gone.
+    problem = connector.validate()
+    if problem:
+        raise SystemExit(f"error: {problem}")
+
     started = time.time()
+    # What was asked, then what will answer it. The use case is repr()'d because it is free
+    # text: `use-case=''` reads unambiguously where a bare `use-case=` would not.
+    print(f"[input]  country={args.country}  use-case={args.use_case!r}")
     print(
-        f"[config] backend={config.LLM_BACKEND} planner={config.PLANNER_MODEL} "
-        f"geofetch={config.GEOFETCH_MODEL} critic={config.CRITIC_MODEL}"
+        f"[config] backend={connector.provider}  "
+        + "  ".join(f"{r}={connector.model_for(r)}" for r in connector.ROLES)
     )
     run = discover(args.country, args.use_case)
 

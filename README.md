@@ -174,6 +174,44 @@ To use Databricks instead of Ollama:
    The geofetch step needs **native function calling**, and is where model quality shows
    most — it is the agent that has to reason its way from a landing page to a file.
 
+### Adding another backend
+
+`beegent/connectors/` ships Ollama (the default) and Databricks. A backend that speaks the
+OpenAI wire format is a subclass plus one registry entry — nothing else in beegent changes:
+
+```python
+from beegent.connectors import CONNECTORS, OpenAICompatConnector
+
+class MyConnector(OpenAICompatConnector):
+    provider = "mine"
+    DEFAULT_MODELS = {"planner": "...", "geofetch": "...", "critic": "..."}
+    def __init__(self, log=print):
+        super().__init__(base_url="https://my-gateway/v1",
+                         api_key=os.environ.get("MY_TOKEN", ""), log=log)
+
+CONNECTORS["mine"] = MyConnector     # now LLM_BACKEND=mine works
+```
+
+Its models, its credentials and its quirks all live in that one file — `config.py` never
+learns the backend exists.
+
+A backend with a *different* wire format subclasses `LLMConnector` directly and implements
+`chat_json()` and `chat_tools()` — mapping its response into `(message, TokenUsage)` is the
+whole integration job. `beegent/connectors/databricks.py` is the worked example: read it to
+see what a real one costs.
+
+Each pipeline stage asks for a *role* (`planner`, `geofetch`, `critic`) and the connector
+resolves it to a model. Pick the backend and any individual model from the command line:
+
+```bash
+uv run python -m beegent.run --country France --use-case "..." \
+  --backend databricks --geofetch-model databricks-claude-sonnet-4-6
+```
+
+**Precedence, highest first:** CLI flag → environment variable → `.env` → the connector's
+`DEFAULT_MODELS`. Overriding one role leaves the others on their defaults, and the run's
+banner and `candidate_list.json` both report what was *actually* used.
+
 Example:
 
 ```bash

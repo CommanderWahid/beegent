@@ -1,49 +1,18 @@
 """
-Single source of truth for backend, models and tunables.
+Backend-independent pipeline tunables, and the backend selector.
+
+What is NOT here: anything specific to one backend. Model names, base URLs and credentials
+live on the connector that owns them (beegent/connectors/), so adding a backend never edits
+this file. `run.py` still prints the resolved models and DiscoveryRun.models records them,
+so "read one place to see what ran" still holds - it is just the run output rather than this
+module.
 """
 
 import os
 
-from dotenv import load_dotenv
-
-load_dotenv()  # picks up DATABRICKS_HOST / DATABRICKS_TOKEN etc. from a .env at repo root,
-# without overriding anything already set in the real environment
-
-LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # "ollama" | "databricks"
-
-# Model name is backend-specific: an Ollama model tag when LLM_BACKEND=ollama,
-# or a Databricks serving-endpoint name when LLM_BACKEND=databricks. Defaults below are
-# picked per backend so flipping LLM_BACKEND alone is enough - no per-model env vars
-# required unless you want to override one.
-_DEFAULT_MODELS = {
-    "ollama": {  # Local setup (RTX 4070 Laptop, 8GB)
-        "PLANNER_MODEL": "deepseek-r1:14b",
-        "GEOFETCH_MODEL": "qwen3:8b",  # qwen3 has the most reliable tool calling under
-                                       # Ollama; deepseek-r1 does not. 8b (~5.2GB) fits an
-                                       # 8GB card with room left for a 16k context. Do not
-                                       # "upgrade" this to qwen3:14b - it was tried and
-                                       # measured at ~10GB resident, 39% spilled to CPU,
-                                       # and it blew past LLM_TIMEOUT on a single call.
-        "CRITIC_MODEL": "deepseek-r1:14b",
-    },
-    "databricks": {  # serving-endpoint names, not bare model names - verify with
-        # `GET /api/2.0/serving-endpoints` if these ever 404 in your workspace
-        "PLANNER_MODEL": "databricks-claude-sonnet-4-6",
-        "GEOFETCH_MODEL": "databricks-claude-haiku-4-5",
-        "CRITIC_MODEL": "databricks-claude-opus-5",
-    },
-}
-_defaults = _DEFAULT_MODELS.get(LLM_BACKEND, _DEFAULT_MODELS["ollama"])
-
-PLANNER_MODEL = os.environ.get("PLANNER_MODEL", _defaults["PLANNER_MODEL"])
-GEOFETCH_MODEL = os.environ.get("GEOFETCH_MODEL", _defaults["GEOFETCH_MODEL"])  # tool-calling
-# agent, once per angle - needs native function calling, this is the expensive one
-CRITIC_MODEL = os.environ.get("CRITIC_MODEL", _defaults["CRITIC_MODEL"])  # rare calls, highest stakes
-
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-
-DATABRICKS_HOST = os.environ.get("DATABRICKS_HOST")
-DATABRICKS_TOKEN = os.environ.get("DATABRICKS_TOKEN")
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # a key into
+# beegent.connectors.CONNECTORS - the registry is the source of truth for what is valid,
+# including any connector registered at runtime
 
 # --- pipeline tunables -------------------------------------------------------
 
