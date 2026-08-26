@@ -1,28 +1,28 @@
 """CLI for the discovery-phase POC.
 
-    python -m core.run --country Kenya --use-case "administrative boundaries for a flood dashboard"
+    python -m beegent.run --country Kenya --use-case "administrative boundaries for a flood dashboard"
 
-Runs planner -> catalog workers -> geofetch (per angle) -> escalation gate -> critic,
+Runs planner -> catalogs -> geofetch (per angle) -> escalation gate -> critic,
 and writes candidate_list.json either way.
 
 Every candidate that reaches the output has had its resource_url independently probed by
-core/pipeline/geofetch.py - an unverified URL cannot get here.
+beegent/pipeline/geofetch.py - an unverified URL cannot get here.
 """
 
 import argparse
 import json
 import time
 
-from core import config
-from core.pipeline import (
+from beegent import config
+from beegent.pipeline import (
     needs_escalation,
     plan,
     resolve_angle,
-    run_catalog_workers,
+    query_catalogs,
     run_critic,
 )
-from core.schemas import Candidate, DiscoveryRun
-from core.search_backends import normalize_url
+from beegent.schemas import Candidate, DiscoveryRun
+from beegent.web_tools import normalize_url
 
 
 def _rank(candidates: list[Candidate]) -> list[Candidate]:
@@ -62,8 +62,8 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
 
     # Catalog workers are deterministic and query-independent enough to run once;
     # their results seed every planner attempt.
-    print("[catalog] running catalog workers")
-    catalog_hits = run_catalog_workers(country, use_case)
+    print("[catalog] querying catalogs")
+    catalog_hits = query_catalogs(country, use_case)
 
     feedback: str | None = None
     carried: list[Candidate] = []  # survivors from earlier iterations

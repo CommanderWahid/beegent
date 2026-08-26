@@ -11,8 +11,8 @@ import re
 
 from openai import BadRequestError, OpenAI
 
-from core import config
-from core.schemas import TokenUsage
+from beegent import config
+from beegent.schemas import TokenUsage
 
 
 def get_llm_client(backend: str = config.LLM_BACKEND) -> OpenAI:
@@ -66,7 +66,7 @@ def message_text(msg) -> str:
 
     Reason: Most endpoints return a plain string, but Databricks' Claude Opus endpoint returns a list
     of content blocks. Normalizing here keeps that shape from leaking into _parse_json() and
-    every caller downstream - including core/pipeline/geofetch.py, which needs the raw message
+    every caller downstream - including beegent/pipeline/geofetch.py, which needs the raw message
     for its tool_calls and reads the text through this.
     """
     content = getattr(msg, "content", None)
@@ -146,7 +146,7 @@ def chat_tools(model: str, messages: list[dict], tools: list[dict]) -> tuple:
     One tool-calling completion. Returns (assistant_message, TokenUsage).
 
     The usage half is what gives a run its cost meter - the geofetch agent sums it across
-    every step and core/run.py reports the total. Backends that report no usage yield a
+    every step and beegent/run.py reports the total. Backends that report no usage yield a
     zeroed TokenUsage rather than None, so callers never branch on it.
     """
     resp = _create(model, messages, tools=tools, temperature=0)

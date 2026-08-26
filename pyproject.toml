@@ -1,7 +1,7 @@
 [project]
-name = "discovery-poc"
+name = "beegent"
 version = "0.1.0"
-description = "Proof-of-concept for the discovery phase of a geospatial data-scoping agent"
+description = "Multi-agent pipeline that turns (country, use_case) into verified geospatial download URLs"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",

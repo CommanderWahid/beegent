@@ -51,7 +51,7 @@ MAX_ANGLES = 3  # cap on planner output, and the main cost lever: every angle is
                 # full agent run (GEOFETCH_MAX_STEPS calls), not one cheap search
 MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 
-# --- geofetch agent (core/pipeline/geofetch.py) -------------------------------
+# --- geofetch agent (beegent/pipeline/geofetch.py) -------------------------------
 
 GEOFETCH_MAX_STEPS = 20  # agent iterations (= LLM calls) per angle; the cost cap
 GEOFETCH_MAX_HTTP_REQUESTS = 50  # web requests per angle, across all three tools
@@ -72,7 +72,7 @@ TRIM_TOOL_TO = 500  # older ones truncated to this many chars
 TOOL_RESULT_MAX_CHARS = 8_000
 TRIM_ASSISTANT_TO = 800  # cap on a kept assistant message
 
-# --- web tools (core/search_backends/web_tools.py) ----------------------------
+# --- web tools (beegent/web_tools.py) -----------------------------------------
 
 MAX_BODY_BYTES = 20_000  # raw XML/JSON body kept per fetched page. Capabilities
                          # documents run far larger and are not more useful for it:

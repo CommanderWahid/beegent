@@ -3,7 +3,7 @@
 Three tools, all dumb on purpose: fetch_page (GET, HTML reduced to text+links, XML/JSON
 raw), web_search (keyless, with an engine fallback chain), and probe_url (a
 range request that identifies a payload from its magic bytes). All the intelligence lives
-in the model - see core/pipeline/geofetch.py.
+in the model - see beegent/pipeline/geofetch.py.
 
 There is no browser here and no JavaScript execution. A JS-app shell is answered by finding
 the machine-readable service behind it, not by rendering it.
@@ -15,7 +15,7 @@ from html.parser import HTMLParser
 from typing import Callable
 from urllib.parse import quote_plus, unquote, urljoin
 
-from core import config
+from beegent import config
 
 MAGIC_SIGNATURES = [
     (b"PAR1", "parquet"),

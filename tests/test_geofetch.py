@@ -1,321 +1,26 @@
 #!/usr/bin/env python3
-"""Offline tests for the geofetch stage - no network, no API key, no LLM.
+"""The agent loop and its five guardrails, driven by a scripted model against the
+synthetic Atlantis portal."""
 
-Three layers are tested:
-  1. The deterministic tools (magic sniffing, HTML summarization, probing, search).
-  2. The full agent loop, using a scripted fake `chat_tools` navigating a SYNTHETIC portal
-     for a fictional country ("Atlantis") - deliberately not any real portal, which is what
-     proves nothing real-world is hardcoded in the harness.
-  3. The pipeline seam: resolve_angle() -> Candidate, and run.py's _rank().
-
-    uv run python -m unittest discover -s tests -v
-"""
-
-import json
 import unittest
 from unittest import mock
 
-from core import config
-from core.llm import strip_think
-from core.pipeline.geofetch import (
+import json
+
+from beegent import config
+from beegent.pipeline.geofetch import (
     GeofetchAgent,
     _compact_history,
     coerce_report_args,
     extract_inline_tool_call,
     resolve_angle,
 )
-from core.pipeline.critic import needs_escalation
-from core.run import _rank
-from core.schemas import Candidate, SearchAngle, TokenUsage
-from core.search_backends.web_tools import (
-    HttpResult,
-    WebTools,
-    classify_magic,
-    summarize_html,
-)
+from beegent.schemas import Candidate
+from beegent.web_tools import HttpResult, WebTools
 
-# --------------------------------------------------------------------------- #
-# Synthetic portal fixtures (fictional country, fictional dataset)
-# --------------------------------------------------------------------------- #
-
-PORTAL = "https://geo.atlantis.example/datasets/LANDCOVER"
-FEED = "https://api.atlantis.example/dl/resource/LANDCOVER"
-ED_2024 = f"{FEED}/LANDCOVER_PARQUET_ATL_2024-01-01"
-ED_2025 = f"{FEED}/LANDCOVER_PARQUET_ATL_2025-07-01"
-FILE_URL = ("https://api.atlantis.example/dl/download/LANDCOVER/"
-            "LANDCOVER_PARQUET_ATL_2025-07-01/forest.parquet")
-FILE_SIZE = 123_456_789
-
-PORTAL_HTML = f"""<!doctype html><html><head>
-<title>Atlantis Geoportal</title>
-<link rel="alternate" type="application/atom+xml" href="{FEED}"/>
-<script src="/static/app.bundle.js"></script>
-</head><body><div id="root"></div>{'<!-- pad -->' * 300}</body></html>"""
-
-FEED_XML = f"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom" pagecount="1">
-  <entry><title>LANDCOVER_PARQUET_ATL_2024-01-01</title>
-    <link rel="alternate" href="{ED_2024}"/><editionDate>2024-01-01</editionDate></entry>
-  <entry><title>LANDCOVER_PARQUET_ATL_2025-07-01</title>
-    <link rel="alternate" href="{ED_2025}"/><editionDate>2025-07-01</editionDate></entry>
-</feed>"""
-
-EDITION_XML = f"""<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom" pagecount="1">
-  <entry><link rel="alternate" href="{FILE_URL}" length="{FILE_SIZE}"/>
-    <content>d41d8cd98f00b204e9800998ecf8427e</content></entry>
-</feed>"""
-
-PARQUET_HEAD = b"PAR1" + b"\x00" * 12
-
-
-def fake_transport(pages: dict, binaries: dict):
-    """Build a transport closure over {url: (status, ctype, body)} pages and
-    {url: total_size} binary files (which honour Range requests)."""
-    def transport(method, url, headers, max_bytes):
-        if url in binaries:
-            total = binaries[url]
-            if "range" in {k.lower() for k in headers}:
-                return HttpResult(206, {
-                    "content-type": "application/vnd.apache.parquet",
-                    "content-range": f"bytes 0-15/{total}"},
-                    PARQUET_HEAD, url)
-            return HttpResult(200, {
-                "content-type": "application/vnd.apache.parquet",
-                "content-length": str(total)}, PARQUET_HEAD, url)
-        if url in pages:
-            status, ctype, body = pages[url]
-            return HttpResult(status, {"content-type": ctype},
-                              body.encode()[:max_bytes], url)
-        return HttpResult(404, {"content-type": "text/html"},
-                          b"<html>not found</html>", url)
-    return transport
-
-
-DEFAULT_PAGES = {
-    PORTAL: (200, "text/html", PORTAL_HTML),
-    FEED: (200, "application/atom+xml", FEED_XML),
-    ED_2025: (200, "application/atom+xml", EDITION_XML),
-}
-
-
-def make_tools(pages=None, binaries=None):
-    return WebTools(transport=fake_transport(pages or DEFAULT_PAGES,
-                                             binaries or {FILE_URL: FILE_SIZE}))
-
-
-# --------------------------------------------------------------------------- #
-# Scripted LLM (shaped like the OpenAI SDK message chat_tools returns)
-# --------------------------------------------------------------------------- #
-
-_CALL_N = [0]
-
-
-class _Fn:
-    def __init__(self, name, arguments):
-        self.name, self.arguments = name, arguments
-
-
-class _Call:
-    def __init__(self, name, args):
-        _CALL_N[0] += 1
-        self.id = f"call_{_CALL_N[0]}"
-        self.type = "function"
-        self.function = _Fn(name, json.dumps(args))
-
-
-class _Msg:
-    """An assistant message with the attributes chat_tools' caller reads."""
-
-    def __init__(self, content=None, tool_calls=None):
-        self.content = content or ""
-        self.tool_calls = list(tool_calls or [])
-
-
-class FakeLLM:
-    """Scripted stand-in for core.llm.chat_tools: pops one (message, usage) pair per call
-    and records the message history it was handed."""
-
-    def __init__(self, turns, raise_on=None, error=None):
-        self.turns = list(turns)
-        self.seen_messages = []
-        self.chat_calls = 0
-        # raise_on: 1-based call number that should blow up instead of returning a turn,
-        # standing in for a rate limit or a timeout that outlived the SDK's own retries.
-        self.raise_on = raise_on
-        self.error = error or RuntimeError("boom")
-
-    def __call__(self, model, messages, tools):
-        self.seen_messages = messages
-        self.chat_calls += 1
-        if self.raise_on is not None and self.chat_calls >= self.raise_on:
-            raise self.error
-        if not self.turns:
-            raise AssertionError("FakeLLM script exhausted")
-        return self.turns.pop(0), TokenUsage(prompt_tokens=100, completion_tokens=20)
-
-
-def tool_turn(name, args, thought=None):
-    return _Msg(content=thought, tool_calls=[_Call(name, args)])
-
-
-GOOD_REPORT = {"found": True, "download_url": FILE_URL,
-               "edition": "LANDCOVER_PARQUET_ATL_2025-07-01",
-               "vintage_date": "2025-07-01", "file_size_bytes": FILE_SIZE,
-               "confidence": "high",
-               "evidence": [PORTAL, FEED, ED_2025, FILE_URL]}
-
-HAPPY_PATH = [
-    tool_turn("fetch_page", {"url": PORTAL}, "Reconnaissance."),
-    tool_turn("fetch_page", {"url": FEED},
-              "HTML is a JS shell; following the atom <link>."),
-    tool_turn("fetch_page", {"url": ED_2025},
-              "2025-07-01 is the latest edition."),
-    tool_turn("probe_url", {"url": FILE_URL}, "Verifying before reporting."),
-    tool_turn("report_result", GOOD_REPORT),
-]
-
-
-# --------------------------------------------------------------------------- #
-# Tool-layer tests
-# --------------------------------------------------------------------------- #
-
-class TestMagic(unittest.TestCase):
-    def test_signatures(self):
-        cases = {b"PAR1xxxx": "parquet", b"PK\x03\x04rest": "zip",
-                 b"SQLite format 3\x00": "sqlite/geopackage",
-                 b"%PDF-1.7": "pdf", b"\x1f\x8bxx": "gzip",
-                 b"  <feed>": "xml/html-text", b'{"a":1}': "json-text",
-                 b"\x00\x00\x00": "unknown"}
-        for raw, expected in cases.items():
-            self.assertEqual(classify_magic(raw), expected, raw)
-
-
-class TestHtmlSummary(unittest.TestCase):
-    def test_extracts_link_tags_and_flags_js_shell(self):
-        out = summarize_html(PORTAL_HTML.encode(), PORTAL)
-        self.assertTrue(out["looks_like_js_app_shell"])
-        self.assertIn(FEED, [link["href"] for link in out["links"]])
-
-    def test_resolves_relative_anchors(self):
-        html = b'<html><body><a href="/dl/file.zip">download</a></body></html>'
-        out = summarize_html(html, "https://x.example/page")
-        self.assertEqual(out["links"][0]["href"], "https://x.example/dl/file.zip")
-        self.assertEqual(out["links"][0]["text"], "download")
-
-    def test_script_src_surfaces_in_links(self):
-        out = summarize_html(PORTAL_HTML.encode(), PORTAL)
-        script_links = [link for link in out["links"] if link["text"] == "<script src>"]
-        self.assertEqual(script_links[0]["href"],
-                         "https://geo.atlantis.example/static/app.bundle.js")
-
-
-class TestWebTools(unittest.TestCase):
-    def test_probe_parses_content_range_and_magic(self):
-        probe = make_tools().probe_url(FILE_URL)
-        self.assertTrue(probe["ok"])
-        self.assertEqual(probe["status"], 206)
-        self.assertEqual(probe["payload_type"], "parquet")
-        self.assertEqual(probe["total_size_bytes"], FILE_SIZE)
-
-    def test_probe_flags_html_error_page(self):
-        probe = make_tools().probe_url("https://api.atlantis.example/nope")
-        self.assertFalse(probe["ok"])
-        self.assertIn("text", probe["payload_type"])
-
-    def test_fetch_page_returns_raw_xml(self):
-        page = make_tools().fetch_page(FEED)
-        self.assertIn("<feed", page["body"])
-        self.assertNotIn("links", page)
-
-    def test_urls_found_surfaces_urls_from_xml_body(self):
-        self.assertIn(FILE_URL, make_tools().fetch_page(ED_2025)["urls_found"])
-
-    def test_urls_found_surfaces_urls_from_html(self):
-        self.assertIn(FEED, make_tools().fetch_page(PORTAL)["urls_found"])
-
-    def test_web_search_parses_ddg_results_and_decodes_redirects(self):
-        from urllib.parse import quote_plus
-        query = "atlantis landcover download parquet"
-        ddg_url = "https://html.duckduckgo.com/html/?q=" + quote_plus(query)
-        ddg_html = """<html><body>
-          <a href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fapi.atlantis.example%2Fdl%2Fresource%2FLANDCOVER&rut=abc">Atlantis download service</a>
-          <a href="https://docs.atlantis.example/landcover">LANDCOVER docs</a>
-        </body></html>"""
-        pages = dict(DEFAULT_PAGES)
-        pages[ddg_url] = (200, "text/html", ddg_html)
-        out = make_tools(pages=pages).web_search(query)
-        urls = [r["url"] for r in out["results"]]
-        self.assertIn(FEED, urls)  # uddg= redirect decoded
-        self.assertIn("https://docs.atlantis.example/landcover", urls)
-        self.assertTrue(all("duckduckgo.com" not in u for u in urls))
-
-    def test_web_search_falls_back_to_next_engine_on_challenge_page(self):
-        from urllib.parse import quote_plus
-        query = "atlantis landcover download"
-        q = quote_plus(query)
-        challenge = "<html><body>anomaly detected, complete the challenge</body></html>"
-        lite_html = ('<html><body><a href="https://api.atlantis.example/dl/'
-                     'resource/LANDCOVER">Atlantis DL service</a></body></html>')
-        pages = dict(DEFAULT_PAGES)
-        pages[f"https://html.duckduckgo.com/html/?q={q}"] = (200, "text/html", challenge)
-        pages[f"https://lite.duckduckgo.com/lite/?q={q}"] = (200, "text/html", lite_html)
-        out = make_tools(pages=pages).web_search(query)
-        self.assertEqual(out["engine"], "ddg-lite")
-        self.assertEqual(out["results"][0]["url"], FEED)
-
-    def test_web_search_total_failure_carries_bot_block_note(self):
-        out = make_tools().web_search("anything")  # no engine URLs routed
-        self.assertEqual(out["results"], [])
-        self.assertIn("bot-blocking", out["note"])
-        self.assertEqual(len(out["engines_tried"]), 3)
-
-    def test_bing_redirect_href_is_base64_decoded(self):
-        import base64
-        target = "https://api.atlantis.example/dl"
-        b64 = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
-        href = f"https://www.bing.com/ck/a?!&&p=abc&u=a1{b64}&ntb=1"
-        self.assertEqual(WebTools._decode_result_href(href), target)
-        self.assertEqual(WebTools._decode_result_href("https://x.example/a"),
-                         "https://x.example/a")
-
-    def test_request_budget_enforced(self):
-        tools = make_tools()
-        tools.max_requests = 2
-        tools.fetch_page(PORTAL)
-        tools.fetch_page(FEED)
-        with self.assertRaises(RuntimeError):
-            tools.fetch_page(ED_2025)
-
-
-class TestStripThink(unittest.TestCase):
-    def test_strip_think_removes_reasoning_blocks(self):
-        raw = "<think>long hidden\nreasoning</think>Following the atom link."
-        self.assertEqual(strip_think(raw), "Following the atom link.")
-        self.assertEqual(strip_think(None), "")
-        self.assertEqual(strip_think("no blocks here"), "no blocks here")
-
-    def test_think_blocks_stripped_from_kept_history(self):
-        turns = [tool_turn("fetch_page", {"url": PORTAL},
-                           thought="<think>secret</think>recon")] + list(HAPPY_PATH)[1:]
-        res, llm = run_agent(turns)
-        self.assertTrue(res.found)
-        assistants = [m for m in llm.seen_messages if m.get("role") == "assistant"]
-        self.assertTrue(any(m["content"] == "recon" for m in assistants))
-        self.assertFalse(any("<think>" in m.get("content", "") for m in assistants))
-
-
-# --------------------------------------------------------------------------- #
-# Agent-loop tests
-# --------------------------------------------------------------------------- #
-
-def run_agent(turns, tools=None, max_steps=10, fmt="GeoParquet"):
-    """Run the agent against a scripted LLM. Returns (AgentResult, FakeLLM)."""
-    llm = FakeLLM(turns)
-    agent = GeofetchAgent(tools=tools or make_tools(), max_steps=max_steps)
-    with mock.patch("core.pipeline.geofetch.chat_tools", llm):
-        res = agent.run(PORTAL, "Atlantis land cover, forest layer", fmt, "latest")
-    return res, llm
+from tests.fixtures import (ANGLE, DEFAULT_PAGES, ED_2025, FEED, FILE_SIZE, FILE_URL,
+                            GOOD_REPORT, HAPPY_PATH, PORTAL, FakeLLM, _Msg, make_tools,
+                            run_agent, run_stage, tool_turn)
 
 
 class TestAgentLoop(unittest.TestCase):
@@ -528,25 +233,6 @@ class TestAgentLoop(unittest.TestCase):
 # Pipeline seam: SearchAngle -> Candidate
 # --------------------------------------------------------------------------- #
 
-ANGLE = SearchAngle(
-    description="Atlantis national mapping agency land cover",
-    channel_hint="national_geoportal",
-    rationale="the authoritative producer",
-    url=PORTAL,
-    dataset="Atlantis land cover, forest layer, whole country",
-    format="GeoParquet",
-    vintage="latest",
-)
-
-
-def run_stage(turns, angle=ANGLE, raise_on=None, error=None):
-    """Drive resolve_angle() with a scripted LLM. No search stub: the angle carries the URL."""
-    llm = FakeLLM(turns, raise_on=raise_on, error=error)
-    tools = make_tools()
-    with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
-         mock.patch("core.pipeline.geofetch.chat_tools", llm):
-        return resolve_angle(angle, log=lambda m: None)
-
 
 class TestResolveAngle(unittest.TestCase):
     def test_verified_result_becomes_a_candidate(self):
@@ -662,8 +348,8 @@ class TestResolveAngle(unittest.TestCase):
         """The planner's four values reach the agent verbatim - nothing is rediscovered."""
         llm = FakeLLM(list(HAPPY_PATH))
         tools = make_tools()
-        with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
-             mock.patch("core.pipeline.geofetch.chat_tools", llm):
+        with mock.patch("beegent.pipeline.geofetch.WebTools", lambda **kw: tools), \
+             mock.patch("beegent.pipeline.geofetch.chat_tools", llm):
             resolve_angle(ANGLE, log=lambda m: None)
         task = json.loads(llm.seen_messages[1]["content"].split("\n", 1)[1])
         self.assertEqual(task, {"start_url": ANGLE.url, "dataset": ANGLE.dataset,
@@ -672,21 +358,16 @@ class TestResolveAngle(unittest.TestCase):
     def test_no_search_is_spent_before_the_agent_runs(self):
         """The pre-flight seed search is gone: a blocked engine can no longer kill an angle
         before it starts. web_search survives as a TOOL the agent may call itself."""
-        from core.pipeline.geofetch import TOOL_SCHEMAS
+        from beegent.pipeline.geofetch import TOOL_SCHEMAS
         llm = FakeLLM(list(HAPPY_PATH))
         tools = make_tools()
         calls = []
         tools.web_search = lambda q: calls.append(q) or {"results": []}
-        with mock.patch("core.pipeline.geofetch.WebTools", lambda **kw: tools), \
-             mock.patch("core.pipeline.geofetch.chat_tools", llm):
+        with mock.patch("beegent.pipeline.geofetch.WebTools", lambda **kw: tools), \
+             mock.patch("beegent.pipeline.geofetch.chat_tools", llm):
             found, _ = run_stage(list(HAPPY_PATH))
         self.assertEqual(calls, [], "resolve_angle still ran a pre-flight search")
         self.assertIn("web_search", [t["function"]["name"] for t in TOOL_SCHEMAS])
-
-
-def _cand(url, resource, conf=0.95):
-    return Candidate(url=url, title="t", source="geofetch",
-                     confidence=conf, resource_url=resource)
 
 
 class TestFormatContainers(unittest.TestCase):
@@ -728,14 +409,14 @@ class TestToolResultCap(unittest.TestCase):
     A 60KB WFS GetCapabilities once drove a single angle to 861k input tokens."""
 
     def test_oversized_result_is_capped_before_entering_history(self):
-        from core.pipeline.geofetch import _fit
+        from beegent.pipeline.geofetch import _fit
         huge = "z" * (config.TOOL_RESULT_MAX_CHARS * 5)
         out = _fit(huge)
         self.assertLess(len(out), config.TOOL_RESULT_MAX_CHARS + 200)
         self.assertIn("truncated", out)  # the model must know it was cut
 
     def test_small_result_is_untouched(self):
-        from core.pipeline.geofetch import _fit
+        from beegent.pipeline.geofetch import _fit
         self.assertEqual(_fit("small"), "small")
 
     def test_cap_applies_in_the_agent_loop(self):
@@ -743,129 +424,10 @@ class TestToolResultCap(unittest.TestCase):
         pages[FEED] = (200, "application/atom+xml", "<feed>" + "q" * 80_000 + "</feed>")
         llm = FakeLLM([tool_turn("fetch_page", {"url": FEED})] + list(HAPPY_PATH)[1:])
         agent = GeofetchAgent(tools=make_tools(pages=pages), max_steps=6)
-        with mock.patch("core.pipeline.geofetch.chat_tools", llm):
+        with mock.patch("beegent.pipeline.geofetch.chat_tools", llm):
             agent.run(PORTAL, "d", "GeoParquet", "latest")
         biggest = max(len(m["content"]) for m in llm.seen_messages if m.get("role") == "tool")
         self.assertLess(biggest, config.TOOL_RESULT_MAX_CHARS + 200)
-
-
-class TestEscalationGate(unittest.TestCase):
-    """ONE condition: was anything verified at all? Neither candidate count nor dead-end
-    count is a gate condition - both were tried and removed."""
-
-    def test_empty_result_escalates(self):
-        escalate, reason = needs_escalation([])
-        self.assertTrue(escalate)
-        self.assertIn("no angle resolved", reason)
-
-    def test_one_verified_candidate_is_enough(self):
-        """A single independently verified download is a good outcome, not something worth
-        an expensive critic call."""
-        escalate, reason = needs_escalation(
-            [_cand("https://a.example/p", "https://a.example/f.parquet")])
-        self.assertFalse(escalate)
-        self.assertEqual(reason, "")
-
-    def test_dead_end_count_is_not_a_gate_condition(self):
-        """The behaviour this change buys: one verified download passes no matter how many
-        other angles missed. A real run verified a cadastre GeoParquet and was still sent to
-        needs_human_review because two sibling angles dead-ended."""
-        self.assertEqual(
-            needs_escalation([_cand("https://a.example/p", "https://a.example/f.parquet")]),
-            (False, ""))
-
-    def test_same_domain_candidates_do_not_escalate(self):
-        """Proves the publisher/domain-diversity branch is gone: two files from one host
-        is a normal result for a country whose data lives on one national portal."""
-        pool = [_cand("https://portal.example/a", "https://portal.example/a.parquet"),
-                _cand("https://portal.example/b", "https://portal.example/b.parquet")]
-        self.assertEqual(needs_escalation(pool), (False, ""))
-
-    def test_candidates_without_resource_url_escalate(self):
-        """Invariant guard: geofetch cannot produce these, so it means a broken contract."""
-        escalate, reason = needs_escalation([_cand("https://a.example/p", None)])
-        self.assertTrue(escalate)
-        self.assertIn("fetchable resource endpoint", reason)
-
-
-class TestCriticInput(unittest.TestCase):
-    """The gate only fires when nothing was verified, so `unresolved` carries the only real
-    signal the critic has: which entry points were reached, and why each yielded no file."""
-
-    def test_dead_end_reasons_reach_the_critic_prompt(self):
-        from core.pipeline import critic as cr
-        seen = {}
-
-        def fake_chat_json(model, messages):
-            seen["user"] = messages[1]["content"]
-            return {"decision": "replan", "note": "try the bulk file server"}
-
-        misses = [Candidate(url="https://slow.example/p", title="t", source="geofetch",
-                            claim={"failure_reason": "portal is login-walled"})]
-        with mock.patch.object(cr, "chat_json", fake_chat_json):
-            out = cr.run_critic("Atlantis", "land cover", [ANGLE], [], misses, "nothing verified")
-        self.assertEqual(out["decision"], "replan")
-        self.assertIn("https://slow.example/p", seen["user"])
-        self.assertIn("portal is login-walled", seen["user"])
-
-
-class TestThrottledAngleReachesTheOutput(unittest.TestCase):
-    """The regression that motivated failing soft: before this, an angle whose LLM call
-    errored left no trace at all in candidate_list.json - no unresolved entry, no cost."""
-
-    def test_discover_records_the_failed_angle(self):
-        from core import run as runmod
-
-        good = SearchAngle("good", "web_search", "r", dataset="d", format="GeoParquet")
-        bad = SearchAngle("throttled", "web_search", "r", dataset="d", format="GeoPackage")
-
-        def fake_resolve(angle):
-            if angle.format == "GeoParquet":
-                return _cand("https://ok.example/p", "https://ok.example/f.parquet"), None
-            # what resolve_angle now returns when the agent aborts mid-loop
-            return None, Candidate(
-                url="https://slow.example/p", title="T", source="geofetch",
-                claim={"failure_reason": "agent aborted: RateLimitError: 429"},
-                cost={"steps_used": 3, "http_requests": 2, "prompt_tokens": 300,
-                      "completion_tokens": 60, "total_tokens": 360})
-
-        with mock.patch.object(runmod, "plan", lambda c, u, f=None: [good, bad]), \
-             mock.patch.object(runmod, "resolve_angle", fake_resolve), \
-             mock.patch.object(runmod, "run_critic",
-                               lambda *a: {"decision": "needs_human_review", "note": "n"}):
-            run = runmod.discover("Atlantis", "land cover")
-
-        out = run.to_dict()
-        self.assertEqual(len(out["candidates"]), 1)
-        self.assertEqual(len(out["unresolved"]), 1, "the throttled angle vanished")
-        self.assertIn("429", out["unresolved"][0]["claim"]["failure_reason"])
-        # and its spend is still attributed in the run totals
-        self.assertEqual(out["totals"]["total_tokens"], 360)
-        self.assertEqual(out["totals"]["angles_run"], 2)
-
-
-class TestRank(unittest.TestCase):
-    _cand = staticmethod(_cand)
-
-    def test_sorts_by_confidence_and_caps(self):
-        pool = [self._cand(f"https://a.example/{i}", f"https://a.example/f{i}.parquet",
-                           0.1 * i) for i in range(10)]
-        ranked = _rank(pool)
-        self.assertEqual(len(ranked), config.MAX_FINAL_CANDIDATES)
-        self.assertEqual([c.confidence for c in ranked],
-                         sorted([c.confidence for c in ranked], reverse=True))
-
-    def test_dedupes_on_resource_url_first_wins(self):
-        carried = self._cand("https://page.example/a", FILE_URL, 0.95)
-        refound = self._cand("https://page.example/b", FILE_URL + "?x=1", 0.8)
-        ranked = _rank([carried, refound])
-        self.assertEqual(len(ranked), 1)
-        self.assertIs(ranked[0], carried)  # carried is passed first, so it wins
-
-    def test_falls_back_to_url_when_no_resource(self):
-        a = self._cand("https://page.example/a", None, 0.9)
-        b = self._cand("https://page.example/a/", None, 0.5)
-        self.assertEqual(len(_rank([a, b])), 1)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@
 Escalation gate (deterministic) + critic agent (one rare LLM call).
 """
 
-from core import config
-from core.llm import chat_json
-from core.schemas import Candidate, SearchAngle
+from beegent import config
+from beegent.llm import chat_json
+from beegent.schemas import Candidate, SearchAngle
 
 CRITIC_SYSTEM = """You review a failed-looking dataset discovery run and decide what happens next.
 

@@ -33,11 +33,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from core import config
-from core.llm import chat_tools, message_text, strip_think, to_message_dict
-from core.schemas import Candidate, SearchAngle, TokenUsage
-from core.search_backends import WebTools, normalize_url
-from core.search_backends.web_tools import _URL_RE  # private: not part of the package API
+from beegent import config
+from beegent.llm import chat_tools, message_text, strip_think, to_message_dict
+from beegent.schemas import Candidate, SearchAngle, TokenUsage
+from beegent.web_tools import WebTools, _URL_RE, normalize_url
 
 SYSTEM_PROMPT = """\
 You are a download-URL resolver agent for open geodata (or any open data).

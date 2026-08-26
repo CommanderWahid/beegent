@@ -9,7 +9,7 @@
 
 </div>
 
-A planner, catalog workers, a per-angle fetch agent, and an escalation/critic loop run as
+A planner, a catalog lookup, a per-angle fetch agent, and an escalation/critic loop run as
 chained agents to find, **verify**, and hand off candidates — turning a day of manual
 searching and tab-switching into a review-ready draft in minutes.
 
@@ -32,9 +32,9 @@ gap-closing step, not a polished system.
 
 ```mermaid
 flowchart TD
-    IN["python -m core.run<br/>--country --use-case"]
+    IN["python -m beegent.run<br/>--country --use-case"]
     PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one IS the fetcher's 4 params:<br/>url + dataset + format + vintage"]
-    CAT["catalog workers<br/>deliberately an empty stub"]
+    CAT["catalogs<br/>deliberately an empty stub"]
     GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each<br/>see the detailed diagram below"]
     RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
     GATE{"escalation gate · no LLM<br/>nothing verified at all?"}
@@ -126,7 +126,7 @@ passes provenance and is caught by the probe. Each covers the other's blind spot
 | geofetch | ≤20 LLM calls, ≤50 HTTP requests **per angle** | 3 angles × 2 iterations = **120 LLM calls** |
 | critic | 1 LLM call | 1 |
 
-Worth knowing before pointing this at a paid endpoint. `MAX_ANGLES` (`core/config.py`) is the
+Worth knowing before pointing this at a paid endpoint. `MAX_ANGLES` (`beegent/config.py`) is the
 main lever. Most angles finish well short of the cap or fail early, so a real run costs less
 than the ceiling — but do not budget on that. `run.totals` reports what a run *actually* spent,
 and each candidate's `cost` block attributes it per angle.
@@ -146,7 +146,7 @@ GeoNetwork/STAC API conventions, API base URLs mined out of JS bundles), which i
 cheaper and more general than driving a UI.
 
 **Backend** defaults to Ollama running locally (`http://localhost:11434`). Pull the models
-`core/config.py` expects:
+`beegent/config.py` expects:
 
 ```bash
 ollama pull deepseek-r1:14b   # planner, critic
@@ -180,7 +180,7 @@ Example:
 cp .env.example .env
 # edit .env with your Databricks host + token
 
-LLM_BACKEND=databricks uv run python -m core.run --country Kenya \
+LLM_BACKEND=databricks uv run python -m beegent.run --country Kenya \
   --use-case "administrative boundaries for a flood-response dashboard"
 ```
 
@@ -238,7 +238,7 @@ The run object also carries `backend`, `models`, and `totals` for the whole run.
 uv run python -m unittest discover -s tests -v
 ```
 
-59 tests, fully offline — no network, no API key, no LLM. The agent loop is exercised by a
+63 tests, fully offline — no network, no API key, no LLM. The agent loop is exercised by a
 scripted fake model navigating a synthetic portal for a fictional country, which is also
 what proves no real portal is hardcoded anywhere. Coverage includes every guardrail in the
 chain above: an invented URL, a wrong-format file, a premature give-up, a repeated call, and
