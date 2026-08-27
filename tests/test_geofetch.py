@@ -153,6 +153,30 @@ class TestAgentLoop(unittest.TestCase):
         # (the repeat cost nothing)
         self.assertEqual(tools.requests_made, 5)
 
+    def test_repeats_abort_the_angle_once_it_is_clearly_stuck(self):
+        """The anti-loop guard used to warn forever. An observed run hit 7 suppressions with
+        zero attempts to finish, burning ~180k tokens for nothing - every further step
+        re-sends the whole conversation."""
+        turns = [tool_turn("fetch_page", {"url": PORTAL})] + [
+            tool_turn("fetch_page", {"url": PORTAL}) for _ in range(6)]
+        res, _ = run_agent(turns, max_steps=10)
+        self.assertFalse(res.found)
+        self.assertIn("not converging", res.report["failure_reason"])
+        self.assertIn(str(config.GEOFETCH_MAX_REPEATS), res.report["failure_reason"])
+        # stopped early rather than burning the full budget
+        self.assertLess(res.steps_used, 10)
+        self.assertGreater(res.usage.total_tokens, 0, "partial cost still reported")
+
+    def test_the_guard_still_allows_recovery(self):
+        """Fewer repeats than the threshold must NOT end the angle - a real run recovered at
+        step 7 after one suppression by switching to web_search, which is exactly what the
+        REPEATED CALL message asks for."""
+        self.assertGreater(config.GEOFETCH_MAX_REPEATS, 1)
+        turns = [tool_turn("fetch_page", {"url": PORTAL}),
+                 tool_turn("fetch_page", {"url": PORTAL})] + list(HAPPY_PATH)[1:]
+        res, _ = run_agent(turns)
+        self.assertTrue(res.found, "one suppression must not abort the angle")
+
     def test_different_args_are_not_treated_as_repeats(self):
         turns = [tool_turn("fetch_page", {"url": PORTAL}),
                  tool_turn("fetch_page", {"url": PORTAL, "accept": "application/xml"}),

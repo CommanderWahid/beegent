@@ -24,6 +24,11 @@ MAX_ITERATIONS = 2  # hard cap on planner attempts (critic re-plans)
 
 GEOFETCH_MAX_STEPS = 20  # agent iterations (= LLM calls) per angle; the cost cap
 GEOFETCH_MAX_HTTP_REQUESTS = 50  # web requests per angle, across all three tools
+GEOFETCH_MAX_REPEATS = 3  # exact tool calls refused by the anti-loop guard before the angle
+                          # is abandoned. A model that has had three identical calls bounced
+                          # is not converging, and every further step re-sends the whole
+                          # conversation: an observed run hit 7 suppressions and 0 attempts
+                          # to finish, burning ~180k tokens to produce nothing.
 GEOFETCH_MIN_EFFORT_REQUESTS = 5  # a failure report filed before this many requests is
                                   # bounced back once with a checklist of untried techniques.
                                   # Weak models give up long before they have tried the
@@ -46,7 +51,12 @@ TRIM_ASSISTANT_TO = 800  # cap on a kept assistant message
 MAX_BODY_BYTES = 20_000  # raw XML/JSON body kept per fetched page. Capabilities
                          # documents run far larger and are not more useful for it:
                          # the agent is looking for a layer name or a link
-MAX_TEXT_CHARS = 4_000  # extracted HTML text kept per page
+MAX_TEXT_CHARS = 2_000  # extracted HTML text kept per page. The agent navigates by
+                        # LINKS, not prose - the run that verified a download read almost
+                        # no page text - and nothing downstream consumes this any more
+                        # (Candidate.description became structured claim/verification).
+                        # Halved rather than dropped: prose still catches inline format
+                        # and coverage mentions that never became a link.
 MAX_LINKS = 80  # hyperlinks reported per page
 MAX_URLS_FOUND = 60  # entries in fetch_page()'s flat urls_found list
 PROBE_BYTES = 16  # enough for every magic signature we know

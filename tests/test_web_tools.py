@@ -60,8 +60,27 @@ class TestWebTools(unittest.TestCase):
     def test_urls_found_surfaces_urls_from_xml_body(self):
         self.assertIn(FILE_URL, make_tools().fetch_page(ED_2025)["urls_found"])
 
-    def test_urls_found_surfaces_urls_from_html(self):
-        self.assertIn(FEED, make_tools().fetch_page(PORTAL)["urls_found"])
+    def test_urls_found_excludes_urls_already_in_links(self):
+        """The two lists used to overlap, so an HTML page paid twice for the same URL on
+        every step it stayed in history. `links` keeps the anchors; `urls_found` keeps only
+        what no anchor would have shown."""
+        page = make_tools().fetch_page(PORTAL)
+        hrefs = [link["href"] for link in page["links"]]
+        self.assertIn(FEED, hrefs, "the atom <link> still reaches the model via links")
+        self.assertNotIn(FEED, page["urls_found"], "and is not duplicated in urls_found")
+        self.assertNotIn(PORTAL, page["urls_found"], "nor is the page's own url")
+
+    def test_urls_found_still_surfaces_what_links_cannot(self):
+        """Its whole value: URLs buried in prose, XML metadata or a JS bundle - the ones a
+        model summarizing the page would miss."""
+        buried = "https://api.atlantis.example/hidden/v2/catalog.json"
+        html = (f'<html><body><a href="{FEED}">feed</a>'
+                f'<p>see also {buried} for the raw catalogue</p></body></html>')
+        pages = dict(DEFAULT_PAGES)
+        pages["https://x.example/p"] = (200, "text/html", html)
+        page = make_tools(pages=pages).fetch_page("https://x.example/p")
+        self.assertIn(buried, page["urls_found"], "prose-only URL must survive")
+        self.assertNotIn(FEED, page["urls_found"], "but the anchor must not duplicate")
 
     def test_web_search_parses_ddg_results_and_decodes_redirects(self):
         from urllib.parse import quote_plus

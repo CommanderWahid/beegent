@@ -106,54 +106,48 @@ using this GENERIC methodology:
    rejected. Be economical, but persistent.
 """
 
+# Re-sent on EVERY call, so wording is a per-step tax: keep these terse. The urls_found
+# hint stays despite that - weak models summarize a page and miss the one URL that matters,
+# and this is what points them at the flat list instead.
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "fetch_page",
-        "description": "GET a URL. HTML is returned as extracted text + all "
-                       "hyperlinks; XML/JSON is returned raw (truncated). "
-                       "Reports redirects and JS-app shells. ALWAYS check "
-                       "the urls_found list: it contains every absolute URL "
-                       "in the body - download services, API bases and file "
-                       "links usually appear there.",
+        "description": "GET a URL. HTML comes back as text + links; XML/JSON raw. "
+                       "Flags redirects and JS-app shells. ALWAYS mine urls_found: "
+                       "every absolute URL in the body, where download services and "
+                       "API bases usually appear.",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"},
-            "accept": {"type": "string",
-                       "description": "optional Accept header for content "
-                                      "negotiation"}},
+            "accept": {"type": "string", "description": "Accept header, for content "
+                                                        "negotiation"}},
             "required": ["url"]}}},
     {"type": "function", "function": {
         "name": "web_search",
-        "description": "Web search. Returns result titles + URLs. Use early "
-                       "when a portal is an opaque JS app: dataset name + "
-                       "'download' + format/API.",
+        "description": "Web search. Returns titles + URLs. Use early on an opaque JS "
+                       "portal: dataset name + 'download' + format.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string"}},
             "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "probe_url",
-        "description": "Cheap range-request of a URL's first bytes: HTTP "
-                       "status, total size, and payload type from magic "
-                       "bytes. Use before reporting any download URL.",
+        "description": "Range-request a URL's first bytes: status, size, and payload "
+                       "type from magic bytes. Use before reporting any download URL.",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"}},
             "required": ["url"]}}},
     {"type": "function", "function": {
         "name": "report_result",
-        "description": "Final answer. Only call after a successful probe_url "
-                       "of download_url.",
+        "description": "Final answer. Only after a successful probe_url of download_url.",
         "parameters": {"type": "object", "properties": {
             "found": {"type": "boolean"},
             "download_url": {"type": "string"},
-            "edition": {"type": "string",
-                        "description": "edition/version identifier"},
+            "edition": {"type": "string", "description": "edition/version id"},
             "vintage_date": {"type": "string"},
             "file_size_bytes": {"type": "integer"},
-            "checksum": {"type": "string",
-                         "description": "checksum if the service advertises one"},
+            "checksum": {"type": "string", "description": "if the service publishes one"},
             "evidence": {"type": "array", "items": {"type": "string"},
                          "description": "ordered discovery chain"},
-            "confidence": {"type": "string",
-                           "enum": ["high", "medium", "low"]},
+            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
             "failure_reason": {"type": "string"}},
             "required": ["found"]}}},
 ]
@@ -239,6 +233,7 @@ class GeofetchAgent:
         self._task_format = fmt
         self._discovered.add(normalize_url(start_url))
         self._call_seen: dict[str, int] = {}  # exact call -> first step it ran at
+        repeats = 0  # suppressed duplicates; enough of them means the model is stuck
         user = "Resolve this download URL:\n" + json.dumps(task, indent=2)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -331,7 +326,21 @@ class GeofetchAgent:
                 call_key = name + ":" + json.dumps(args, sort_keys=True)
                 first = self._call_seen.get(call_key)
                 if first is not None:
-                    self.log(f"  (repeated call suppressed: {name})")
+                    repeats += 1
+                    self.log(f"  (repeated call suppressed: {name}, "
+                             f"{repeats}/{config.GEOFETCH_MAX_REPEATS})")
+                    if repeats >= config.GEOFETCH_MAX_REPEATS:
+                        # Stop paying for a loop the harness can already see. Every further
+                        # step re-sends the whole conversation, so a stuck angle gets more
+                        # expensive per step while producing nothing.
+                        self.log(f"[step {step}] aborted: not converging "
+                                 f"({repeats} repeated calls)")
+                        result.report = {
+                            "found": False,
+                            "failure_reason": f"gave up: {repeats} repeated tool calls, "
+                                              "the agent was not converging",
+                        }
+                        return result
                     messages.append({
                         "role": "tool", "tool_call_id": call.id,
                         "content": json.dumps({

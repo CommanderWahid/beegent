@@ -204,13 +204,20 @@ class WebTools:
             out.update(summarize_html(r.body, r.final_url))
         else:
             out["body"] = r.body[: config.MAX_BODY_BYTES].decode("utf-8", errors="replace")
-        # Surface EVERY absolute URL in the raw body as a flat list - weak models summarize
-        # pages and miss URLs buried in prose, XML metadata or JS bundles; a salient list is
-        # much harder to overlook, and the methodology tells the model to mine it first.
-        urls, seen = [], set()
+        # Surface absolute URLs from the raw body that are NOT already anchors - weak models
+        # summarize pages and miss URLs buried in prose, XML metadata or JS bundles, and the
+        # methodology tells the model to mine this list first.
+        #
+        # Anchors are excluded because `links` already carries them: including both meant
+        # paying twice for the same URL on every HTML page, and every kept tool result is
+        # re-sent on every subsequent step. What remains is exactly the unique value of this
+        # field - the URLs no anchor would have shown.
+        seen = {link["href"] for link in out.get("links", [])}
+        seen.add(url)
+        urls = []
         for m in _URL_RE.finditer(r.body.decode("utf-8", errors="replace")):
             u = m.group(0).rstrip(".,;\"')\\")
-            if u not in seen and u != url:
+            if u not in seen:
                 seen.add(u)
                 urls.append(u[:300])
             if len(urls) >= config.MAX_URLS_FOUND:
