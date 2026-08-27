@@ -6,7 +6,7 @@ from unittest import mock
 
 from beegent.pipeline import critic as cr
 from beegent.pipeline.critic import needs_escalation
-from beegent.schemas import Candidate
+from beegent.schemas import Candidate, TokenUsage
 
 from tests.fixtures import ANGLE, _cand
 
@@ -59,7 +59,8 @@ class TestCriticInput(unittest.TestCase):
 
         def fake_chat_json(model, messages):
             seen["user"] = messages[1]["content"]
-            return {"decision": "replan", "note": "try the bulk file server"}
+            return ({"decision": "replan", "note": "try the bulk file server"},
+                    TokenUsage(40, 10))
 
         misses = [Candidate(url="https://slow.example/p", title="t", source="geofetch",
                             claim={"failure_reason": "portal is login-walled"})]

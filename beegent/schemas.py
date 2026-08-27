@@ -5,7 +5,12 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class TokenUsage:
-    """Normalized token accounting, summed across every LLM call in a run."""
+    """Normalized token accounting for one or more LLM calls.
+
+    Every call is counted exactly once, but by two different routes: chat_tools() usage is
+    summed per angle into AgentResult.usage, while chat_json() usage goes to the per-role
+    meter in beegent/llm.py. Both land in DiscoveryRun.totals.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -69,7 +74,10 @@ class DiscoveryRun:
     backend: str = ""  # config.LLM_BACKEND - which wire the models were reached over
     models: dict = field(default_factory=dict)  # {planner, geofetch, critic} - one file
     # tells you what actually ran, without cross-referencing config against the environment
-    totals: dict = field(default_factory=dict)  # run-wide cost, accumulated as angles finish
+    # Run-wide cost. Geofetch is accumulated as angles finish; planner and critic are
+    # folded in from the llm.py meter on the way out, since neither produces a Candidate to
+    # hang a cost on. "by_role" breaks the token counts down per stage.
+    totals: dict = field(default_factory=dict)
     candidates: list[Candidate] = field(default_factory=list)
     # Angles that dead-ended: reached a page, but no fetchable endpoint could be verified
     # (null confidence and null resource_url are the markers). Excluded from candidates so

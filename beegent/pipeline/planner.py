@@ -77,7 +77,9 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
             "Produce new angles that follow that advice; do not repeat what clearly failed."
         )
 
-    data = chat_json(
+    # Usage is discarded here: llm.chat_json already recorded it against the role, and
+    # run.totals reads it from there rather than being threaded up through plan().
+    data, _ = chat_json(
         "planner",
         [
             {"role": "system", "content": SYSTEM.format(max_angles=config.MAX_ANGLES)},

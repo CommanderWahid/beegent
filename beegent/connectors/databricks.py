@@ -64,6 +64,12 @@ class DatabricksConnector(OpenAICompatConnector):
             kwargs.pop("temperature")
             return super()._create(model, messages, **kwargs)
 
+    # No _token_usage() override: the OpenAI-shaped gateway reports prompt_tokens and
+    # completion_tokens under those names, so the base implementation is correct. If a
+    # metric is ever added that Claude-behind-Databricks spells differently, override it
+    # HERE - and only after dumping a real `usage` object from the endpoint. A guessed
+    # field name yields a zero that is indistinguishable from "not reported".
+
     def validate(self) -> str | None:
         if not self.host:
             return "databricks backend needs DATABRICKS_HOST (see .env.example)."

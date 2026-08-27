@@ -82,7 +82,8 @@ def run_critic(
         )
         or "(none recorded)"
     )
-    data = chat_json(
+    # Usage discarded - see the note in planner.py:plan().
+    data, _ = chat_json(
         "critic",
         [
             {"role": "system", "content": CRITIC_SYSTEM},
@@ -96,7 +97,8 @@ def run_critic(
                 ),
             },
         ],
-    ) or {}
+    )
+    data = data or {}
 
     decision = data.get("decision")
     if decision not in ("replan", "needs_human_review"):

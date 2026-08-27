@@ -2,8 +2,11 @@
 """The one LLM client: <think> stripping, which both Ollama defaults need."""
 
 import unittest
+from unittest import mock
 
+from beegent import llm
 from beegent.llm import strip_think
+from beegent.schemas import TokenUsage
 
 from tests.fixtures import HAPPY_PATH, PORTAL, run_agent, tool_turn
 
@@ -32,3 +35,58 @@ class TestStripThink(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestUsageMeter(unittest.TestCase):
+    """chat_json's usage used to be dropped on the floor, so planner and critic tokens
+    never reached run.totals at all."""
+
+    def setUp(self):
+        llm.reset_usage()
+        self.addCleanup(llm.reset_usage)
+
+    def _conn(self, usage):
+        class C:
+            ROLES = ("planner", "geofetch", "critic")
+            def model_for(self, role):
+                return f"model-{role}"
+            def chat_json(self, model, messages):
+                return {"ok": True}, usage
+        return C()
+
+    def test_chat_json_returns_the_same_2_tuple_shape_as_chat_tools(self):
+        """Both are one completion and both report what it cost, so they read alike at
+        every call site."""
+        with mock.patch.object(llm, "get_connector", lambda: self._conn(TokenUsage(5, 3))):
+            data, usage = llm.chat_json("planner", [])
+        self.assertEqual(data, {"ok": True})
+        self.assertEqual(usage.total_tokens, 8)
+
+    def test_every_call_site_unpacks_before_testing_the_answer(self):
+        """The tuple is ALWAYS truthy, so `if chat_json(...)` would read a None answer as
+        an answer. Guard the two real call sites against regressing to that."""
+        import inspect
+
+        from beegent.pipeline import critic, planner
+
+        for mod in (planner, critic):
+            src = inspect.getsource(mod)
+            self.assertIn("= chat_json(", src, mod.__name__)
+            self.assertNotIn("if chat_json(", src, f"{mod.__name__} must unpack first")
+            self.assertNotIn(") or {}", src, f"{mod.__name__} must not or-default the tuple")
+
+    def test_usage_is_recorded_against_the_role(self):
+        with mock.patch.object(llm, "get_connector", lambda: self._conn(TokenUsage(5, 3))):
+            llm.chat_json("planner", [])
+            llm.chat_json("critic", [])
+            llm.chat_json("planner", [])
+        by_role = llm.usage_by_role()
+        self.assertEqual(by_role["planner"].total_tokens, 16)   # two calls
+        self.assertEqual(by_role["critic"].total_tokens, 8)
+        self.assertNotIn("geofetch", by_role, "chat_tools must not feed the meter")
+
+    def test_reset_clears_between_runs(self):
+        with mock.patch.object(llm, "get_connector", lambda: self._conn(TokenUsage(5, 3))):
+            llm.chat_json("planner", [])
+        llm.reset_usage()
+        self.assertEqual(llm.usage_by_role(), {})

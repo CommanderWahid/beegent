@@ -46,6 +46,58 @@ class TestRegistry(unittest.TestCase):
         with self.assertRaises(TypeError):
             LLMConnector()
 
+    def test_validate_is_part_of_the_contract_not_an_optional_hook(self):
+        """A connector that inherited a permissive default would report itself validated
+        while checking nothing - the failure then lands mid-run, after tokens are spent."""
+
+        class NoValidate(LLMConnector):
+            provider = "noval"
+            def chat_json(self, model, messages):
+                return {}, TokenUsage()
+            def chat_tools(self, model, messages, tools):
+                return None, TokenUsage()
+
+        with self.assertRaises(TypeError) as ctx:
+            NoValidate()
+        self.assertIn("validate", str(ctx.exception))
+
+
+class TestTokenUsageExtractionIsAConnectorConcern(unittest.TestCase):
+    """Field names for usage are a provider convention, not a standard. _token_usage() is
+    the one seam where a backend that spells them differently plugs in."""
+
+    class _Odd(OpenAICompatConnector):
+        provider = "odd"
+        DEFAULT_MODELS = {"planner": "m", "geofetch": "m", "critic": "m"}
+
+        def __init__(self):
+            super().__init__("http://x", "k", log=lambda m: None)
+
+        def validate(self):
+            return None
+
+        def _token_usage(self, raw):
+            # this backend says input_tokens/output_tokens
+            return TokenUsage(prompt_tokens=getattr(raw, "input_tokens", 0) or 0,
+                              completion_tokens=getattr(raw, "output_tokens", 0) or 0)
+
+        def _create(self, model, messages, **kw):
+            return mock.Mock(
+                choices=[mock.Mock(message=mock.Mock(content='{"a": 1}'))],
+                usage=mock.Mock(input_tokens=70, output_tokens=30,
+                                prompt_tokens=0, completion_tokens=0),
+            )
+
+    def test_override_is_used_by_chat_json(self):
+        _, usage = self._Odd().chat_json("m", [])
+        self.assertEqual((usage.prompt_tokens, usage.completion_tokens), (70, 30))
+
+    def test_override_is_used_by_chat_tools_too(self):
+        """Both call sites must route through the one seam, or a connector would have to
+        override in two places and would silently half-work."""
+        _, usage = self._Odd().chat_tools("m", [], [])
+        self.assertEqual((usage.prompt_tokens, usage.completion_tokens), (70, 30))
+
 
 class TestBackendQuirksAreOwnedLocally(unittest.TestCase):
     """Each quirk used to be an `if config.LLM_BACKEND == ...` in shared code."""
@@ -152,14 +204,16 @@ class TestExtensibility(unittest.TestCase):
         class MyConnector(LLMConnector):          # NOT OpenAI-shaped
             provider = "mine"
             def chat_json(self, model, messages):
-                return {"decision": "replan", "note": "n"}
+                return {"decision": "replan", "note": "n"}, TokenUsage(11, 7)
             def chat_tools(self, model, messages, tools):
                 return llm(model, messages, tools)
+            def validate(self):
+                return None                       # nothing to check, said explicitly
 
         CONNECTORS["mine"] = MyConnector
         try:
             c = create_connector("mine")
-            self.assertIsNone(c.validate())       # default is permissive
+            self.assertIsNone(c.validate())       # it opted into "nothing to check"
             tools = make_tools()
             with mock.patch("beegent.pipeline.geofetch.WebTools", lambda **kw: tools), \
                  mock.patch("beegent.pipeline.geofetch.chat_tools", c.chat_tools):
@@ -182,6 +236,8 @@ class TestExtensibility(unittest.TestCase):
             DEFAULT_MODELS = {"planner": "p-1", "geofetch": "g-1", "critic": "c-1"}
             def __init__(self, log=print):
                 super().__init__(base_url="https://x/v1", api_key="k", log=log)
+            def validate(self):
+                return None
 
         c = SelfContained(log=lambda m: None)
         self.assertEqual([c.model_for(r) for r in c.ROLES], ["p-1", "g-1", "c-1"])
@@ -270,3 +326,42 @@ class TestBackendSelection(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestChatJsonChargesEveryAttempt(unittest.TestCase):
+    """CHAT_JSON_ATTEMPTS makes a non-JSON reply cost twice. Only the connector can see
+    the discarded attempt, which is the reason chat_json returns usage at all."""
+
+    class _Conn(OpenAICompatConnector):
+        provider = "t"
+        DEFAULT_MODELS = {"planner": "m", "geofetch": "m", "critic": "m"}
+
+        def __init__(self, replies):
+            super().__init__("http://x", "k", log=lambda m: None)
+            self.replies = list(replies)
+            self.calls = 0
+
+        def validate(self):
+            return None
+
+        def _create(self, model, messages, **kw):
+            content, prompt, completion = self.replies[self.calls]
+            self.calls += 1
+            return mock.Mock(
+                choices=[mock.Mock(message=mock.Mock(content=content))],
+                usage=mock.Mock(prompt_tokens=prompt, completion_tokens=completion),
+            )
+
+    def test_retry_sums_both_attempts(self):
+        c = self._Conn([("not json at all", 100, 20), ('{"a": 1}', 100, 25)])
+        data, usage = c.chat_json("m", [])
+        self.assertEqual(c.calls, 2, "the first reply was unparseable, so it retried")
+        self.assertEqual(data, {"a": 1})
+        self.assertEqual(usage.prompt_tokens, 200, "the discarded attempt still cost input")
+        self.assertEqual(usage.completion_tokens, 45)
+
+    def test_total_failure_still_reports_what_it_spent(self):
+        c = self._Conn([("nope", 100, 20), ("still nope", 100, 20)])
+        data, usage = c.chat_json("m", [])
+        self.assertIsNone(data, "None means no answer")
+        self.assertEqual(usage.total_tokens, 240, "a run that answered nothing still billed")

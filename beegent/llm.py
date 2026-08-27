@@ -15,6 +15,7 @@ import re
 
 from beegent import config
 from beegent.connectors import LLMConnector, create_connector
+from beegent.schemas import TokenUsage
 
 #: Built on first USE, not first import. That is what lets run.py's --backend flag decide
 #: before anything is constructed: by the time main() parses arguments, this module has long
@@ -39,6 +40,25 @@ def select_backend(provider: str) -> LLMConnector:
     global _connector
     _connector = create_connector(provider)
     return _connector
+
+
+#: Per-role token spend since the last reset_usage(). This exists because planner and
+#: critic calls produce no Candidate, and run.totals is otherwise accumulated from
+#: Candidate.cost - so their tokens had nowhere to land and went uncounted entirely.
+#:
+#: This module is the only layer that knows the ROLE: a connector is handed a model name,
+#: so per-role attribution is not possible any deeper down.
+_usage: dict[str, TokenUsage] = {}
+
+
+def reset_usage() -> None:
+    """Clear the meter. beegent/run.py:discover() calls this once at the start of a run."""
+    _usage.clear()
+
+
+def usage_by_role() -> dict[str, TokenUsage]:
+    """A copy of what each role has spent since the last reset_usage()."""
+    return dict(_usage)
 
 
 def message_text(msg) -> str:
@@ -84,8 +104,8 @@ def parse_json(raw: str) -> dict | None:
     return None
 
 
-def chat_json(role: str, messages: list[dict]) -> dict | None:
-    """One JSON-mode completion, retried once. None if no attempt produced JSON.
+def chat_json(role: str, messages: list[dict]) -> tuple:
+    """One JSON-mode completion, retried once. Returns (data, TokenUsage).
 
     `role` is a pipeline stage ("planner" / "critic"), not a model name: the connector maps
     it to a model, so which model a stage uses is the backend's business, not the caller's.
@@ -93,10 +113,19 @@ def chat_json(role: str, messages: list[dict]) -> dict | None:
     Empty completions do happen - a thinking model under GPU pressure can return nothing at
     all - and observed failures were transient, so a retry usually clears them.
 
-    Callers must treat None as "no answer", never as a negative answer.
+    Callers must treat a None `data` as "no answer", never as a negative answer - and must
+    UNPACK before testing it, because the 2-tuple itself is always truthy. `data, _ = ...`
+    is the idiom; `if chat_json(...)` is always a bug.
+
+    Same shape as chat_tools() deliberately: both are one completion and both report what
+    it cost, so they read the same at every call site. The usage is also recorded against
+    `role` in the meter above, which is what run.totals reads - callers that only want the
+    answer can discard their copy.
     """
     c = get_connector()
-    return c.chat_json(c.model_for(role), messages)
+    data, usage = c.chat_json(c.model_for(role), messages)
+    _usage.setdefault(role, TokenUsage()).add(usage)
+    return data, usage
 
 
 def chat_tools(role: str, messages: list[dict], tools: list[dict]) -> tuple:
@@ -107,6 +136,11 @@ def chat_tools(role: str, messages: list[dict], tools: list[dict]) -> tuple:
     The usage half is what gives a run its cost meter - the geofetch agent sums it across
     every step and beegent/run.py reports the total. Backends that report no usage yield a
     zeroed TokenUsage rather than None, so callers never branch on it.
+
+    Deliberately NOT recorded into the per-role meter above, unlike chat_json: the rule is
+    that each call is counted once, by the layer that can attribute it. This usage already
+    reaches run.totals per-angle via AgentResult.usage -> Candidate.cost, so metering it
+    here as well would double-count it.
     """
     c = get_connector()
     return c.chat_tools(c.model_for(role), messages, tools)

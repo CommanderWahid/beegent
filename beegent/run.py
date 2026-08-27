@@ -16,7 +16,7 @@ import time
 
 from beegent import config
 from beegent.connectors import CONNECTORS, LLMConnector
-from beegent.llm import get_connector, select_backend
+from beegent.llm import get_connector, reset_usage, select_backend, usage_by_role
 from beegent.pipeline import (
     needs_escalation,
     plan,
@@ -24,7 +24,7 @@ from beegent.pipeline import (
     query_catalogs,
     run_critic,
 )
-from beegent.schemas import Candidate, DiscoveryRun
+from beegent.schemas import Candidate, DiscoveryRun, TokenUsage
 from beegent.web_tools import normalize_url
 
 
@@ -44,6 +44,33 @@ def _rank(candidates: list[Candidate]) -> list[Candidate]:
 
 
 _COST_KEYS = ("http_requests", "prompt_tokens", "completion_tokens", "total_tokens")
+_TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+
+
+def _add_role(totals: dict, role: str, usage: TokenUsage) -> None:
+    """Add one role's tokens to its bucket in totals["by_role"]."""
+    bucket = totals["by_role"].setdefault(role, dict.fromkeys(_TOKEN_KEYS, 0))
+    bucket["prompt_tokens"] += usage.prompt_tokens
+    bucket["completion_tokens"] += usage.completion_tokens
+    bucket["total_tokens"] += usage.total_tokens
+
+
+def _finalize(run: DiscoveryRun) -> DiscoveryRun:
+    """Fold the per-role LLM meter into run.totals, then hand the run back.
+
+    EVERY exit from discover() returns through here - including the early "ok" one, which
+    is the common case - so planner and critic spend is recorded whichever branch ended the
+    run. Miss one and the cheapest, most frequent path is the one that under-reports.
+
+    Geofetch is not in the meter: its tokens are already in totals, accumulated per angle
+    from Candidate.cost. That split is what keeps nothing counted twice.
+    """
+    for role, usage in usage_by_role().items():
+        _add_role(run.totals, role, usage)
+        run.totals["prompt_tokens"] += usage.prompt_tokens
+        run.totals["completion_tokens"] += usage.completion_tokens
+        run.totals["total_tokens"] += usage.total_tokens
+    return run
 
 
 def discover(country: str, use_case: str) -> DiscoveryRun:
@@ -56,8 +83,11 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         # Accumulated as angles finish, never summed from run.candidates at the end:
         # run.unresolved is replaced each iteration, so a final sum would silently
         # under-count every dead end from iteration 1.
-        totals=dict.fromkeys(("angles_run",) + _COST_KEYS, 0),
+        totals=dict.fromkeys(("angles_run",) + _COST_KEYS, 0) | {"by_role": {}},
     )
+    # The meter is module-level, so a second discover() in one process would otherwise
+    # inherit the first run's planner and critic tokens.
+    reset_usage()
 
     # Catalog workers are deterministic and query-independent enough to run once;
     # their results seed every planner attempt.
@@ -103,6 +133,9 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 cost = (found or missed).cost
                 for key in _COST_KEYS:
                     run.totals[key] += cost.get(key, 0)
+                _add_role(run.totals, "geofetch",
+                          TokenUsage(prompt_tokens=cost.get("prompt_tokens", 0),
+                                     completion_tokens=cost.get("completion_tokens", 0)))
 
         run.candidates = _rank(carried + list(catalog_hits) + fresh)
         run.unresolved = misses
@@ -112,7 +145,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         if not escalate:
             run.status = "ok"
             run.reason = None
-            return run
+            return _finalize(run)
 
         print(f"[gate] escalating: {gate_reason}")
         if iteration >= config.MAX_ITERATIONS:
@@ -122,7 +155,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 f"{gate_reason}; reached max_iterations ({config.MAX_ITERATIONS}) "
                 "without enough signal"
             )
-            return run
+            return _finalize(run)
 
         verdict = run_critic(
             country, use_case, angles, run.candidates, run.unresolved, gate_reason
@@ -134,9 +167,9 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
 
         run.status = "needs_human_review"
         run.reason = verdict["note"]
-        return run
+        return _finalize(run)
 
-    return run
+    return _finalize(run)
 
 
 def main() -> None:
@@ -217,6 +250,16 @@ def main() -> None:
         f"{t['total_tokens']:,} tokens "
         f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
     )
+    # Where the tokens went. Biggest spender first - on a run that found nothing this is
+    # how you see whether the planner or the critic was the one burning them.
+    by_role = t.get("by_role") or {}
+    if by_role:
+        parts = "  |  ".join(
+            f"{role} {b['total_tokens']:,}"
+            for role, b in sorted(by_role.items(),
+                                  key=lambda kv: kv[1]["total_tokens"], reverse=True)
+        )
+        print(f"            {parts}")
     print(f"written to: {args.out}")
 
 
