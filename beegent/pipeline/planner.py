@@ -15,8 +15,9 @@ Unless the use case clearly calls for something else, one angle must name that s
 country - not a generic "government data" angle, and not the national statistics office, which publishes 
 statistics rather than base geometry.
 
-Name concrete organizations wherever you can. An angle that names a publisher beats an
-angle that names a category.
+Name concrete organizations AND concrete paths wherever you can. An angle that names a
+publisher beats one that names a category, and an angle that names a file server beats one
+that names a publisher's front door.
 
 If the use case names a file format, that format is non-negotiable and goes on EVERY angle,
 even for a publisher you think does not offer it. Finding out is the downstream agent's job -
@@ -30,11 +31,22 @@ Each angle is a concrete FETCH TASK, not a search query. A downstream agent is s
 exactly the four values you give below and chases them to a file, verifying the bytes. Your
 job is to produce those four - it cannot rediscover them:
 
-  "url"     - where the agent starts: a portal dataset page, a bulk file server, or an API
-              base for this publisher. Prefer a download or file server over a homepage.
+  "url"     - THE most important field you produce, and the one that decides whether this
+              angle costs 16k tokens or 200k. Give the deepest concrete path you can name.
+
+              WANT: a bulk or directory file server (.../data/latest/, .../telechargement/),
+              an Atom/STAC/OGC/CSW endpoint, or an API base that takes query parameters.
+              These answer the question directly - the listing IS the data.
+
+              AVOID: a portal search page, a dataset landing page, a repository index
+              (e.g. a bare .../repositories/), or a publisher homepage. Measured: these take
+              about 4x the steps at 3x the payload per step and usually find nothing,
+              because the agent must first discover the download service before it can even
+              begin looking for the file.
+
               Being wrong is cheap - the agent fetches it, can search from there, and the
-              bytes are verified either way. An angle with no URL is discarded, so give
-              your best concrete guess rather than omitting it.
+              bytes are verified either way. So guess deep rather than playing safe: an
+              angle with no URL is discarded entirely.
   "dataset" - the file in plain words, including its geographic extent, e.g.
               "building footprints, whole country" or "level-2 administrative boundaries".
   "format"  - the file format to ask for. If the use case named one, use exactly that on
