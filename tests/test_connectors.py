@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""The connector layer: contract, registry, and the quirks each backend owns.
-
-The point of these tests is that adding a backend must be a subclass plus a registry entry.
-test_a_third_party_connector_drives_the_pipeline is the real check - if registering a new
-connector and running an angle through it is awkward, the abstraction is wrong.
-"""
+"""The connector layer: contract, registry, and the quirks each backend owns."""
 
 import os
 import unittest
@@ -47,8 +42,7 @@ class TestRegistry(unittest.TestCase):
             LLMConnector()
 
     def test_validate_is_part_of_the_contract_not_an_optional_hook(self):
-        """A connector that inherited a permissive default would report itself validated
-        while checking nothing - the failure then lands mid-run, after tokens are spent."""
+        """A connector with no validate() of its own must fail at construction, not mid-run."""
 
         class NoValidate(LLMConnector):
             provider = "noval"
@@ -63,8 +57,7 @@ class TestRegistry(unittest.TestCase):
 
 
 class TestTokenUsageExtractionIsAConnectorConcern(unittest.TestCase):
-    """Field names for usage are a provider convention, not a standard. _token_usage() is
-    the one seam where a backend that spells them differently plugs in."""
+    """Field names for usage are a provider convention, not a standard."""
 
     class _Odd(OpenAICompatConnector):
         provider = "odd"
@@ -93,8 +86,7 @@ class TestTokenUsageExtractionIsAConnectorConcern(unittest.TestCase):
         self.assertEqual((usage.prompt_tokens, usage.completion_tokens), (70, 30))
 
     def test_override_is_used_by_chat_tools_too(self):
-        """Both call sites must route through the one seam, or a connector would have to
-        override in two places and would silently half-work."""
+        """Both call sites must route through the one seam, or an override half-works."""
         _, usage = self._Odd().chat_tools("m", [], [])
         self.assertEqual((usage.prompt_tokens, usage.completion_tokens), (70, 30))
 
@@ -225,8 +217,7 @@ class TestExtensibility(unittest.TestCase):
             CONNECTORS.pop("mine", None)
 
     def test_a_new_backend_never_touches_config(self):
-        """The property this whole layout exists for: a connector declares its own models
-        and credentials, so config.py never learns a backend's name."""
+        """A connector owns its models and credentials; config.py never learns its name."""
         import inspect
 
         from beegent import config as cfg
@@ -256,11 +247,7 @@ class TestExtensibility(unittest.TestCase):
 
 
 class TestCliOverrides(unittest.TestCase):
-    """Precedence: CLI flag > environment > .env > the connector's DEFAULT_MODELS.
-
-    Driven through main()'s real argument handling rather than model_for() alone - the
-    wiring is what is new here, not the resolution.
-    """
+    """Precedence: CLI flag > environment > .env > the connector's DEFAULT_MODELS."""
 
     BASE = ["--country", "X", "--use-case", "Y", "--out", "/dev/null"]
 
@@ -329,8 +316,7 @@ if __name__ == "__main__":
 
 
 class TestChatJsonChargesEveryAttempt(unittest.TestCase):
-    """CHAT_JSON_ATTEMPTS makes a non-JSON reply cost twice. Only the connector can see
-    the discarded attempt, which is the reason chat_json returns usage at all."""
+    """CHAT_JSON_ATTEMPTS makes a non-JSON reply cost twice."""
 
     class _Conn(OpenAICompatConnector):
         provider = "t"

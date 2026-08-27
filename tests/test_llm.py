@@ -28,9 +28,7 @@ class TestStripThink(unittest.TestCase):
         self.assertFalse(any("<think>" in m.get("content", "") for m in assistants))
 
 
-# --------------------------------------------------------------------------- #
-# Agent-loop tests
-# --------------------------------------------------------------------------- #
+# --- agent-loop tests ---
 
 
 if __name__ == "__main__":
@@ -38,8 +36,7 @@ if __name__ == "__main__":
 
 
 class TestUsageMeter(unittest.TestCase):
-    """chat_json's usage used to be dropped on the floor, so planner and critic tokens
-    never reached run.totals at all."""
+    """chat_json's usage was dropped, so planner and critic tokens never reached totals."""
 
     def setUp(self):
         llm.reset_usage()
@@ -55,16 +52,14 @@ class TestUsageMeter(unittest.TestCase):
         return C()
 
     def test_chat_json_returns_the_same_2_tuple_shape_as_chat_tools(self):
-        """Both are one completion and both report what it cost, so they read alike at
-        every call site."""
+        """Both are one completion reporting its cost, so they read alike everywhere."""
         with mock.patch.object(llm, "get_connector", lambda: self._conn(TokenUsage(5, 3))):
             data, usage = llm.chat_json("planner", [])
         self.assertEqual(data, {"ok": True})
         self.assertEqual(usage.total_tokens, 8)
 
     def test_every_call_site_unpacks_before_testing_the_answer(self):
-        """The tuple is ALWAYS truthy, so `if chat_json(...)` would read a None answer as
-        an answer. Guard the two real call sites against regressing to that."""
+        """The tuple is always truthy, so only an unpacked test is safe."""
         import inspect
 
         from beegent.pipeline import critic, planner

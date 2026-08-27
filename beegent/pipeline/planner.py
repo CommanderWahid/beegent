@@ -77,8 +77,7 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
             "Produce new angles that follow that advice; do not repeat what clearly failed."
         )
 
-    # Usage is discarded here: llm.chat_json already recorded it against the role, and
-    # run.totals reads it from there rather than being threaded up through plan().
+    # Usage discarded: llm.chat_json already recorded it against the role.
     data, _ = chat_json(
         "planner",
         [
@@ -93,10 +92,7 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
             continue
         url = str(raw.get("url") or "").strip()
         if not url.startswith("http"):
-            # Without a start URL there is no fetch task, so the angle is dropped rather
-            # than half-built. If every angle is dropped, plan() returns [] and the run
-            # escalates to the critic - that is the machinery working, not a gap, and it
-            # beats inventing a generic angle that has nowhere to start.
+            # No start URL means no fetch task, so drop it rather than half-build it.
             print(f"  [plan] dropping angle with no usable url: {raw['description'][:60]}")
             continue
         angles.append(
@@ -105,8 +101,7 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
                 channel_hint=str(raw.get("channel_hint", "web_search")),
                 rationale=str(raw.get("rationale", "")),
                 url=url,
-                # A missing spec must not lose the angle: description is a usable dataset
-                # description, and "" format falls back to a liveness check.
+                # A missing spec must not lose the angle.
                 dataset=str(raw.get("dataset") or raw["description"]),
                 format=str(raw.get("format") or ""),
                 vintage=str(raw.get("vintage") or "latest"),

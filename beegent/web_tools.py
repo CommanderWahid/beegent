@@ -1,13 +1,4 @@
-"""WebTools - the deterministic web layer the geofetch agent drives.
-
-Three tools, all dumb on purpose: fetch_page (GET, HTML reduced to text+links, XML/JSON
-raw), web_search (keyless, with an engine fallback chain), and probe_url (a
-range request that identifies a payload from its magic bytes). All the intelligence lives
-in the model - see beegent/pipeline/geofetch.py.
-
-There is no browser here and no JavaScript execution. A JS-app shell is answered by finding
-the machine-readable service behind it, not by rendering it.
-"""
+"""WebTools - the deterministic web layer the geofetch agent drives."""
 
 import re
 from dataclasses import dataclass
@@ -61,10 +52,7 @@ def classify_magic(first_bytes: bytes) -> str:
 
 
 def default_transport(method: str, url: str, headers: dict, max_bytes: int) -> HttpResult:
-    """Real HTTP transport (requests). Streams and truncates the body.
-
-    Injectable so the whole agent loop is testable offline - see tests/test_geofetch.py.
-    """
+    """Real HTTP transport (requests)."""
     import requests
 
     try:
@@ -88,9 +76,7 @@ def default_transport(method: str, url: str, headers: dict, max_bytes: int) -> H
         return HttpResult(0, {}, b"", url, error=f"{type(exc).__name__}: {exc}")
 
 
-# --------------------------------------------------------------------------- #
-# HTML -> text + links
-# --------------------------------------------------------------------------- #
+# --- HTML -> text + links ---
 
 
 class _LinkTextParser(HTMLParser):
@@ -155,9 +141,7 @@ def summarize_html(body: bytes, base_url: str) -> dict:
     return {"text": text, "links": links, "looks_like_js_app_shell": js_shell}
 
 
-# --------------------------------------------------------------------------- #
-# The tools
-# --------------------------------------------------------------------------- #
+# --- the tools ---
 
 
 class WebTools:
@@ -177,8 +161,7 @@ class WebTools:
             raise RuntimeError("HTTP request budget exhausted")
 
     def fetch_page(self, url: str, accept: str = "") -> dict:
-        """Fetch a URL and return LLM-digestible content (text+links for HTML,
-        truncated raw body for XML/JSON)."""
+        """Fetch a URL as text+links for HTML, or a truncated raw body for XML/JSON."""
         self._guard()
         self.log(f"  fetch_page {url}" + (f" (Accept: {accept})" if accept else ""))
         headers = {"User-Agent": "beegent-geofetch/1.0"}
@@ -204,14 +187,7 @@ class WebTools:
             out.update(summarize_html(r.body, r.final_url))
         else:
             out["body"] = r.body[: config.MAX_BODY_BYTES].decode("utf-8", errors="replace")
-        # Surface absolute URLs from the raw body that are NOT already anchors - weak models
-        # summarize pages and miss URLs buried in prose, XML metadata or JS bundles, and the
-        # methodology tells the model to mine this list first.
-        #
-        # Anchors are excluded because `links` already carries them: including both meant
-        # paying twice for the same URL on every HTML page, and every kept tool result is
-        # re-sent on every subsequent step. What remains is exactly the unique value of this
-        # field - the URLs no anchor would have shown.
+        # Absolute URLs the anchors do NOT already carry - prose, XML metadata, JS bundles.
         seen = {link["href"] for link in out.get("links", [])}
         seen.add(url)
         urls = []
@@ -254,15 +230,7 @@ class WebTools:
         return href
 
     def web_search(self, query: str) -> dict:
-        """Keyless web search with an engine fallback chain (DuckDuckGo HTML, DuckDuckGo
-        Lite, Bing). Returns [{title, url}] plus the engine actually used.
-
-        No API key, and deliberately so - a paid provider was tried here and its ranking
-        was not better (its top hit for a real query was the format's spec page), so the
-        key, the config, and the extra dependency bought nothing.
-
-        Engines do bot-block, hence the chain and the note on total failure: zero results
-        means blocked far more often than it means the thing does not exist."""
+        """Keyless web search over a DuckDuckGo -> DDG-lite -> Bing fallback chain."""
         self.log(f"  web_search {query!r}")
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -308,9 +276,7 @@ class WebTools:
     # --- probe ------------------------------------------------------------- #
 
     def probe_url(self, url: str) -> dict:
-        """Range-request the first bytes of a URL: status, size, payload type. Cheap
-        liveness/type check that never downloads the whole file - and the basis of every
-        verification verdict in the pipeline."""
+        """Range-request the first bytes of a URL: status, size, payload type."""
         self._guard()
         self.log(f"  probe_url {url}")
         headers = {

@@ -1,8 +1,4 @@
-"""Ollama - the default. Local, no key, no cost.
-
-Talks to Ollama's OpenAI-compatible endpoint, so it inherits everything from
-OpenAICompatConnector and only declares what is different: it accepts JSON mode.
-"""
+"""Ollama - the default."""
 
 import os
 from typing import Callable
@@ -19,10 +15,7 @@ class OllamaConnector(OpenAICompatConnector):
     # Sized for a local box (RTX 4070 Laptop, 8GB).
     DEFAULT_MODELS = {
         "planner": "deepseek-r1:14b",
-        # qwen3 has the most reliable tool calling under Ollama; deepseek-r1 does not.
-        # 8b (~5.2GB) fits an 8GB card with room left for a 16k context. Do NOT "upgrade"
-        # this to qwen3:14b - it was tried and measured at ~10GB resident, 39% spilled to
-        # CPU, and it blew past LLM_TIMEOUT on a single call.
+        # qwen3:8b has the most reliable tool calling here; do NOT "upgrade" to 14b.
         "geofetch": "qwen3:8b",
         "critic": "deepseek-r1:14b",
     }
@@ -35,12 +28,7 @@ class OllamaConnector(OpenAICompatConnector):
         )
 
     def validate(self) -> str | None:
-        """Reachability, not credentials - there are none.
-
-        A pulled-model check is deliberately not done here: it would need Ollama's native
-        /api/tags rather than the OpenAI surface, and a missing model already fails loudly
-        on the first call with a clear message.
-        """
+        """Reachability, not credentials - there are none."""
         import requests
 
         root = self.base_url.rsplit("/v1", 1)[0]

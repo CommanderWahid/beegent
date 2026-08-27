@@ -1,6 +1,4 @@
-"""
-Escalation gate (deterministic) + critic agent (one rare LLM call).
-"""
+"""Escalation gate (deterministic) + critic agent (one rare LLM call)."""
 
 from beegent.llm import chat_json
 from beegent.schemas import Candidate, SearchAngle
@@ -27,18 +25,8 @@ Reply with JSON only:
 
 
 def needs_escalation(candidates: list[Candidate]) -> tuple[bool, str]:
-    """
-    Deterministic threshold check - cheap, no model call.
-
-    ONE condition: did anything get verified at all? Neither the candidate count nor the
-    dead-end count is a gate condition - both were tried and removed. One independently
-    probed download is a good outcome even if every other angle missed, and escalating it
-    to the critic buys nothing but an expensive call.
-    """
-    # Total failure. `any([])` is False, so this is what catches an empty run - it is the
-    # load-bearing branch, not the invariant guard it reads like. It doubles as that guard:
-    # geofetch only returns found=True after probing, so a non-empty list reaching here with
-    # no resource_url at all would mean the contract was broken upstream.
+    """Deterministic threshold check - cheap, no model call."""
+    # `any([])` is False, so this catches the empty run - that is what it is for.
     if not any(c.resource_url for c in candidates):
         return True, (
             "no angle resolved to a verified download"
@@ -58,14 +46,7 @@ def run_critic(
     unresolved: list[Candidate],
     gate_reason: str,
 ) -> dict:
-    """
-    Run the critic LLM to decide what to do next.
-
-    The gate only fires when nothing was verified, so `candidates` is almost always empty
-    here and `unresolved` carries the only real signal: which entry points were reached and
-    why each one yielded no file. Without it the critic is asked to name a better route while
-    being told nothing about why the last ones failed.
-    """
+    """Run the critic LLM to decide what to do next."""
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
     found = (
         "\n".join(

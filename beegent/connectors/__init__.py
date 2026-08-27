@@ -1,19 +1,4 @@
-"""The connector registry.
-
-Adding a backend is a subclass plus one entry here - nothing else in beegent changes:
-
-    from beegent.connectors import CONNECTORS, OpenAICompatConnector
-
-    class MyConnector(OpenAICompatConnector):
-        provider = "mine"
-        def __init__(self, log=print):
-            super().__init__(base_url="https://my-gateway/v1", api_key="...", log=log)
-
-    CONNECTORS["mine"] = MyConnector       # now LLM_BACKEND=mine works
-
-A backend that does not speak the OpenAI wire format subclasses `LLMConnector` directly and
-implements `chat_json` / `chat_tools` itself.
-"""
+"""The connector registry."""
 
 from beegent.connectors.base import LLMConnector, OpenAICompatConnector
 from beegent.connectors.databricks import DatabricksConnector

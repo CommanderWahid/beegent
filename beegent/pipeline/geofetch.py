@@ -1,32 +1,4 @@
-"""Geofetch: the per-angle worker. Resolves a search angle into a VERIFIED download URL.
-
-One tool-calling agent per angle, given three deterministic tools (fetch_page, web_search,
-probe_url) and a generic methodology - never a portal-specific parser. All the intelligence
-is in the model; the tools are dumb on purpose.
-
-What makes this different from finding a page that looks like data: the model can only
-finish by calling report_result, and when it does, the harness INDEPENDENTLY re-probes the
-reported URL with deterministic code before accepting it. Five guardrails police the known
-failure modes:
-
-  * provenance   - a URL that never appeared in a tool result is rejected as invented
-  * re-probe     - bad status, or an HTML error page at a download URL, is rejected
-  * format match - the probed file's magic bytes must match the requested format, so
-                   drifting to the wrong dataset fails verification
-  * min effort   - a failure report filed before GEOFETCH_MIN_EFFORT_REQUESTS requests is
-                   bounced back once with a checklist of untried techniques
-  * anti-loop    - an exactly repeated tool call is answered from memory with a warning
-                   instead of re-spending HTTP budget
-
-Plus two small-model survival measures: history compaction (Ollama silently evicts the
-OLDEST messages on overflow - the system prompt and the task - so old tool results are
-trimmed in place) and a rescue parser for template drift (long conversations make some
-models write {"name": ..., "arguments": ...} as plain text instead of emitting a real tool
-call; it is executed anyway, with a reminder).
-
-A fabricated URL therefore cannot reach candidate_list.json. The worst case is an honest
-failure, recorded in `unresolved`.
-"""
+"""Geofetch: the per-angle worker."""
 
 import json
 import re
@@ -106,9 +78,7 @@ using this GENERIC methodology:
    rejected. Be economical, but persistent.
 """
 
-# Re-sent on EVERY call, so wording is a per-step tax: keep these terse. The urls_found
-# hint stays despite that - weak models summarize a page and miss the one URL that matters,
-# and this is what points them at the flat list instead.
+# Re-sent on EVERY call, so wording is a per-step tax: keep these terse.
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "fetch_page",
@@ -154,15 +124,7 @@ TOOL_SCHEMAS = [
 
 TOOL_NAMES = {"fetch_page", "probe_url", "web_search", "report_result"}
 
-# Requested-format -> acceptable probe payload types (magic-byte classes).
-# Bulk geodata is routinely shipped inside a container: IGN publishes national GeoPackage as
-# split .7z.001 archives, Shapefile is almost always zipped, GeoTIFF is often gzipped. `zip`
-# was already accepted here on exactly that reasoning; _ARCHIVES just makes the rule complete
-# and consistent instead of accidentally zip-only.
-#
-# GeoParquet is deliberately NOT loosened: Parquet is not archive-shipped, and admitting
-# containers there would let any zip satisfy the format most often asked for - which is the
-# one place this guardrail earns its keep.
+# Requested format -> acceptable probe payloads. GeoParquet stays strict, deliberately.
 _ARCHIVES = {"zip", "7z", "gzip"}
 FORMAT_PAYLOADS = {
     "geoparquet": {"parquet"}, "parquet": {"parquet"},
@@ -220,13 +182,7 @@ class GeofetchAgent:
 
     def run(self, start_url: str, dataset: str, fmt: str,
             vintage: str = "latest") -> AgentResult:
-        """Drive the agent to a verified download, or to an honest failure.
-
-        Never raises: a tool crash becomes a tool result the model can react to, and an LLM
-        transport error (rate limit, timeout past the SDK's retries) becomes a failed
-        AgentResult carrying the steps and tokens already spent. Callers get a result object
-        in every case, so nothing an angle did can vanish from the run's accounting.
-        """
+        """Drive the agent to a verified download, or to an honest failure."""
         task = {"start_url": start_url, "dataset": dataset,
                 "format": fmt, "vintage": vintage}
         self._task_json = json.dumps(task)
@@ -247,11 +203,7 @@ class GeofetchAgent:
             try:
                 msg, usage = chat_tools("geofetch", messages, TOOL_SCHEMAS)
             except Exception as exc:
-                # The LLM call is the one thing in this loop that can still raise - tool
-                # crashes are already caught in _dispatch(). A rate limit or a timeout that
-                # outlives the SDK's retries must degrade to an honest failure carrying the
-                # cost spent so far, not blow the angle away with no record: the angle most
-                # likely to be throttled is exactly the one you need to see in the output.
+                # The one thing here that can still raise; degrade with the cost so far.
                 self.log(f"[step {step}] aborted: {type(exc).__name__}: {exc}")
                 result.report = {
                     "found": False,
@@ -275,8 +227,7 @@ class GeofetchAgent:
                                      "Continue using tools, or call report_result. "
                                      "REMINDER of the task: " + self._task_json})
                     continue
-                # Template drift: the model wrote a tool call as plain text. Execute it
-                # anyway - the intent is unambiguous - and remind it to emit real calls.
+                # Template drift: run the plain-text call anyway, then remind the model.
                 name, args = rescued
                 self.log(f"[step {step}] rescued inline {name} call")
                 result.transcript.append({"step": step, "tool": name,
@@ -321,8 +272,7 @@ class GeofetchAgent:
                             "task_reminder": self._task_json})})
                     continue
 
-                # Anti-loop: an identical call is answered from memory with a warning
-                # instead of re-spending HTTP budget and context on the same result.
+                # Anti-loop: an identical call is answered from memory, costing no budget.
                 call_key = name + ":" + json.dumps(args, sort_keys=True)
                 first = self._call_seen.get(call_key)
                 if first is not None:
@@ -330,9 +280,7 @@ class GeofetchAgent:
                     self.log(f"  (repeated call suppressed: {name}, "
                              f"{repeats}/{config.GEOFETCH_MAX_REPEATS})")
                     if repeats >= config.GEOFETCH_MAX_REPEATS:
-                        # Stop paying for a loop the harness can already see. Every further
-                        # step re-sends the whole conversation, so a stuck angle gets more
-                        # expensive per step while producing nothing.
+                        # A stuck angle gets more expensive per step while producing nothing.
                         self.log(f"[step {step}] aborted: not converging "
                                  f"({repeats} repeated calls)")
                         result.report = {
@@ -364,8 +312,7 @@ class GeofetchAgent:
         return result
 
     def _handle_report(self, args: dict) -> dict | None:
-        """Trust-but-verify: re-probe reported URLs ourselves.
-        Returns the accepted outcome, or None to reject the report and bounce it back."""
+        """Trust-but-verify: re-probe reported URLs ourselves."""
         if not args.get("found"):
             if (self.tools.requests_made < config.GEOFETCH_MIN_EFFORT_REQUESTS
                     and not self._failure_nudged):
@@ -431,14 +378,7 @@ def _finish(result: AgentResult, outcome: dict, args: dict) -> AgentResult:
 
 
 def _fit(payload: str) -> str:
-    """Cap one tool result before it enters the conversation.
-
-    Every kept result is resent on every subsequent step, so an uncapped one is not a one-off
-    cost - it is a per-step tax for the rest of the angle. A single 60KB WFS GetCapabilities
-    once drove one angle to 861k input tokens and tripped a workspace rate limit, starving
-    every angle after it. The marker matters: the model has to know it was cut so it can
-    re-fetch something narrower instead of concluding the document ends there.
-    """
+    """Cap one tool result before it enters the conversation."""
     if len(payload) <= config.TOOL_RESULT_MAX_CHARS:
         return payload
     return payload[: config.TOOL_RESULT_MAX_CHARS] + (
@@ -446,10 +386,7 @@ def _fit(payload: str) -> str:
 
 
 def _compact_history(messages: list) -> None:
-    """Trim old tool results and long assistant rambles IN PLACE so the conversation fits
-    small local context windows. Without this, Ollama silently evicts the OLDEST messages
-    on overflow - i.e. the system prompt and the task itself - and the model drifts
-    off-goal, which looks like a model failure but is a context failure."""
+    """Trim old tool results and long assistant messages in place to fit a small context."""
     tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
     for i in tool_idx[: -config.KEEP_FULL_TOOL_RESULTS or None]:
         c = messages[i].get("content", "")
@@ -461,10 +398,7 @@ def _compact_history(messages: list) -> None:
 
 
 def extract_inline_tool_call(text: str) -> tuple | None:
-    """Rescue parser for local-model template drift: long conversations make some models
-    (qwen3 among them) stop emitting native tool calls and write
-    {"name": ..., "arguments": {...}} as plain text instead. Find and parse such a call
-    anywhere in the content. Returns (name, args) or None."""
+    """Rescue parser for models that write a tool call as plain text instead of emitting it."""
     text = strip_think(text)
     text = re.sub(r"```(?:json)?", "", text)
     text = text.replace("<tool_call>", " ").replace("</tool_call>", " ")
@@ -488,9 +422,7 @@ def extract_inline_tool_call(text: str) -> tuple | None:
 
 
 def coerce_report_args(args: dict) -> dict:
-    """Normalize a malformed report_result (e.g. {"error": ...} with no 'found' field)
-    into the expected schema. Weak models misname fields; that is not a reason to lose
-    a genuine result."""
+    """Normalize a malformed report_result (e.g."""
     out = dict(args)
     if not out.get("download_url") and out.get("url"):
         out["download_url"] = out["url"]  # common field-name slip
@@ -504,26 +436,16 @@ def coerce_report_args(args: dict) -> dict:
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Stage entry point
-# --------------------------------------------------------------------------- #
+# --- stage entry point ---
 
 
-# What the model is allowed to contribute to Candidate.claim. A whitelist, not a passthrough:
-# `report` is model-authored, so copying it wholesale would let a model put arbitrary keys -
-# including something that reads like a verification result - into the output. `found` and
-# `download_url` are excluded as duplicates of list membership and `resource_url`.
+# A whitelist, never a passthrough: `report` is model-authored.
 _CLAIM_KEYS = ("edition", "vintage_date", "file_size_bytes", "checksum",
                "confidence", "evidence", "failure_reason")
 
 
 def _claim(report: dict) -> dict:
-    """The model's own account of the file, structured. Never verified - see Candidate.
-
-    Shape is normalized, truth is not: `evidence` is guaranteed to be a list so a consumer
-    can always iterate it, because a model that returns it as a bare string would otherwise
-    have callers walking it one character at a time. The contents stay exactly as claimed.
-    """
+    """The model's own account of the file, structured."""
     claim = {k: report[k] for k in _CLAIM_KEYS if report.get(k) not in (None, "", [], {})}
     if "evidence" in claim and not isinstance(claim["evidence"], list):
         claim["evidence"] = [claim["evidence"]]
@@ -531,11 +453,7 @@ def _claim(report: dict) -> dict:
 
 
 def _cost(result: AgentResult, tools: WebTools) -> dict:
-    """What the angle actually cost. Measured by the harness, not reported by the model.
-
-    Recorded per angle rather than only per run because the expensive thing to spot is a
-    single dead end that burned the whole step budget.
-    """
+    """What the angle actually cost."""
     return {
         "steps_used": result.steps_used,
         "http_requests": tools.requests_made,
@@ -548,23 +466,13 @@ def _cost(result: AgentResult, tools: WebTools) -> dict:
 def resolve_angle(
     angle: SearchAngle, log: Callable[[str], None] = print,
 ) -> tuple[Candidate | None, Candidate | None]:
-    """Resolve one search angle into a verified candidate.
-
-    Returns (verified, unresolved) - at most one is non-None. `verified` always carries a
-    probed `resource_url` and a `verification` block; `unresolved` records an angle that
-    honestly found nothing, so a dead end is visible in the output rather than silent.
-
-    Both slots carry `claim` (what the model said) and `cost` (what the angle actually
-    spent). Only `verified` carries `verification` - there is nothing to verify on a miss.
-    """
+    """Resolve one search angle into a verified candidate."""
     tools = WebTools(log=log)
     agent = GeofetchAgent(tools=tools, log=log)
     start_url = angle.url
 
     dataset = angle.dataset or angle.description
-    # The four values the agent is actually started with - log them together, at the point
-    # of use, so a surprising result can be read back against the task that produced it
-    # rather than reconstructed from the planner's output three stages upstream.
+    # The four values the agent is actually started with, logged at the point of use.
     log(f"    [geofetch] task: url      = {start_url}")
     log(f"    [geofetch]       dataset  = {dataset!r}")
     log(f"    [geofetch]       format   = {angle.format!r}"
@@ -590,8 +498,7 @@ def resolve_angle(
                           for t in result.transcript))
 
     if not result.found:
-        # Nothing found must never vanish silently: record the dead end, with the page we
-        # did look at, the reason the agent gave up, and what the attempt cost.
+        # Nothing found must never vanish silently - record the dead end and its cost.
         claim = _claim(report)
         claim.setdefault("failure_reason", "no verifiable download found")
         return None, Candidate(

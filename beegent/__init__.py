@@ -1,11 +1,4 @@
-"""Beegent discovery pipeline - see CLAUDE.md for architecture.
-
-`.env` is loaded HERE, not in config.py, and the placement is deliberate: connectors read
-their own credentials straight from os.environ, so loading must happen before any module in
-the package reads a variable - whatever order they happen to be imported in. Putting it in
-the package __init__ makes that guaranteed rather than an accident of config.py being
-imported early.
-"""
+"""Beegent discovery pipeline - see CLAUDE.md for architecture."""
 
 from dotenv import load_dotenv
 

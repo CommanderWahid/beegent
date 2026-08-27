@@ -61,9 +61,7 @@ class TestWebTools(unittest.TestCase):
         self.assertIn(FILE_URL, make_tools().fetch_page(ED_2025)["urls_found"])
 
     def test_urls_found_excludes_urls_already_in_links(self):
-        """The two lists used to overlap, so an HTML page paid twice for the same URL on
-        every step it stayed in history. `links` keeps the anchors; `urls_found` keeps only
-        what no anchor would have shown."""
+        """The two lists used to overlap, so a page paid twice for the same URL."""
         page = make_tools().fetch_page(PORTAL)
         hrefs = [link["href"] for link in page["links"]]
         self.assertIn(FEED, hrefs, "the atom <link> still reaches the model via links")
@@ -71,8 +69,7 @@ class TestWebTools(unittest.TestCase):
         self.assertNotIn(PORTAL, page["urls_found"], "nor is the page's own url")
 
     def test_urls_found_still_surfaces_what_links_cannot(self):
-        """Its whole value: URLs buried in prose, XML metadata or a JS bundle - the ones a
-        model summarizing the page would miss."""
+        """Its whole value: URLs in prose, XML or a JS bundle that no anchor would show."""
         buried = "https://api.atlantis.example/hidden/v2/catalog.json"
         html = (f'<html><body><a href="{FEED}">feed</a>'
                 f'<p>see also {buried} for the raw catalogue</p></body></html>')

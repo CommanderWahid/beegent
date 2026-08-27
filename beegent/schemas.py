@@ -5,12 +5,7 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class TokenUsage:
-    """Normalized token accounting for one or more LLM calls.
-
-    Every call is counted exactly once, but by two different routes: chat_tools() usage is
-    summed per angle into AgentResult.usage, while chat_json() usage goes to the per-role
-    meter in beegent/llm.py. Both land in DiscoveryRun.totals.
-    """
+    """Normalized token accounting for one or more LLM calls."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -30,9 +25,7 @@ class SearchAngle:
     description: str  # e.g. "national statistics office boundary data"
     channel_hint: str  # "catalog" | "web_search" | "national_geoportal"
     rationale: str
-    # These four ARE the fetcher's parameters - one per GeofetchAgent.run() argument. The
-    # planner's whole job is to map (country, use_case) into them, so nothing downstream has
-    # to rediscover any of it. An angle missing `url` is not a fetch task and is dropped.
+    # These four ARE the fetcher's parameters; an angle missing `url` is dropped.
     url: str = ""  # where to start: a dataset page, bulk file server, or API base
     dataset: str = ""  # free-text description of the file wanted
     format: str = ""  # "GeoParquet" | "GeoPackage" | ... | "" = any, which disarms the
@@ -46,20 +39,11 @@ class Candidate:
     title: str
     source: str  # "geofetch" | "catalog:hdx" etc.
     confidence: float | None = None  # geofetch's claim.confidence band, mapped through
-    # config.CONFIDENCE_BY_REPORT. None marks an unresolved entry - see DiscoveryRun below.
-    # The endpoint that actually serves the data - a direct download or an API. Distinct from
-    # `url`, which stays whatever page discovery found and cited. Never guessed: geofetch only
-    # sets this after independently probing it, so a non-None value here means bytes of the
-    # right type were seen on the wire. None means no fetchable endpoint could be verified.
+    # The endpoint that serves the data, set only after an independent probe.
     resource_url: str | None = None
-    # --- the trust split. These two blocks must never be conflated. ---
-    # What the MODEL said: edition, vintage_date, file_size_bytes, checksum, its own
-    # confidence band, the ordered `evidence` chain, and `failure_reason` on a dead end.
-    # Every key here is unverified - useful for review and provenance, never a fact.
+    # The trust split: `claim` is what the MODEL said, and not one key of it is verified.
     claim: dict = field(default_factory=dict)
-    # What the HARNESS measured by re-probing `resource_url`: status, payload_type,
-    # first_bytes_hex, total_size_bytes. Written by deterministic code, never by a model -
-    # this is the field to trust. None means nothing was verified.
+    # What the HARNESS measured by re-probing; written by deterministic code.
     verification: dict | None = None
     # What the angle cost: steps_used, http_requests, and token counts. Measured, not claimed.
     cost: dict = field(default_factory=dict)
@@ -73,15 +57,10 @@ class DiscoveryRun:
     max_iterations: int = 2  # hard cap - after this, stop re-planning and flag for human
     backend: str = ""  # config.LLM_BACKEND - which wire the models were reached over
     models: dict = field(default_factory=dict)  # {planner, geofetch, critic} - one file
-    # tells you what actually ran, without cross-referencing config against the environment
-    # Run-wide cost. Geofetch is accumulated as angles finish; planner and critic are
-    # folded in from the llm.py meter on the way out, since neither produces a Candidate to
-    # hang a cost on. "by_role" breaks the token counts down per stage.
+    # Run-wide cost; "by_role" breaks the token counts down per stage.
     totals: dict = field(default_factory=dict)
     candidates: list[Candidate] = field(default_factory=list)
-    # Angles that dead-ended: reached a page, but no fetchable endpoint could be verified
-    # (null confidence and null resource_url are the markers). Excluded from candidates so
-    # nothing unverified rides in, recorded here so nothing found disappears silently.
+    # Dead ends: excluded from candidates, recorded so nothing found vanishes silently.
     unresolved: list[Candidate] = field(default_factory=list)
     status: str = "ok"  # "ok" | "needs_human_review"
     reason: str | None = None  # populated when status is needs_human_review

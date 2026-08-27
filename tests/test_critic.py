@@ -12,8 +12,7 @@ from tests.fixtures import ANGLE, _cand
 
 
 class TestEscalationGate(unittest.TestCase):
-    """ONE condition: was anything verified at all? Neither candidate count nor dead-end
-    count is a gate condition - both were tried and removed."""
+    """ONE condition: was anything verified at all?"""
 
     def test_empty_result_escalates(self):
         escalate, reason = needs_escalation([])
@@ -21,24 +20,20 @@ class TestEscalationGate(unittest.TestCase):
         self.assertIn("no angle resolved", reason)
 
     def test_one_verified_candidate_is_enough(self):
-        """A single independently verified download is a good outcome, not something worth
-        an expensive critic call."""
+        """One verified download is a good outcome, not worth an expensive critic call."""
         escalate, reason = needs_escalation(
             [_cand("https://a.example/p", "https://a.example/f.parquet")])
         self.assertFalse(escalate)
         self.assertEqual(reason, "")
 
     def test_dead_end_count_is_not_a_gate_condition(self):
-        """The behaviour this change buys: one verified download passes no matter how many
-        other angles missed. A real run verified a cadastre GeoParquet and was still sent to
-        needs_human_review because two sibling angles dead-ended."""
+        """One verified download passes no matter how many other angles missed."""
         self.assertEqual(
             needs_escalation([_cand("https://a.example/p", "https://a.example/f.parquet")]),
             (False, ""))
 
     def test_same_domain_candidates_do_not_escalate(self):
-        """Proves the publisher/domain-diversity branch is gone: two files from one host
-        is a normal result for a country whose data lives on one national portal."""
+        """Two files from one host is a normal result; the diversity branch is gone."""
         pool = [_cand("https://portal.example/a", "https://portal.example/a.parquet"),
                 _cand("https://portal.example/b", "https://portal.example/b.parquet")]
         self.assertEqual(needs_escalation(pool), (False, ""))
@@ -51,8 +46,7 @@ class TestEscalationGate(unittest.TestCase):
 
 
 class TestCriticInput(unittest.TestCase):
-    """The gate only fires when nothing was verified, so `unresolved` carries the only real
-    signal the critic has: which entry points were reached, and why each yielded no file."""
+    """`unresolved` carries the only real signal the critic has."""
 
     def test_dead_end_reasons_reach_the_critic_prompt(self):
         seen = {}

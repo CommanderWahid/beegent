@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""The agent loop and its five guardrails, driven by a scripted model against the
-synthetic Atlantis portal."""
+"""The agent loop and its five guardrails, against the synthetic Atlantis portal."""
 
 import unittest
 from unittest import mock
@@ -60,8 +59,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(len(rejections), 1)
 
     def test_premature_failure_rejected_then_accepted(self):
-        """A give-up after too few HTTP requests is bounced back once with technique
-        suggestions; a repeated failure report is then accepted."""
+        """A premature give-up is bounced once; a repeated failure report is then accepted."""
         failure = {"found": False, "failure_reason": "no GeoParquet distribution"}
         turns = [tool_turn("report_result", dict(failure)),
                  tool_turn("report_result", dict(failure))]
@@ -90,8 +88,7 @@ class TestAgentLoop(unittest.TestCase):
                             for m in llm.seen_messages if m.get("role") == "user"))
 
     def test_undiscovered_url_rejected_as_invented(self):
-        """Reporting a URL that never appeared in any tool result is blocked even if that
-        URL is live - provenance is required."""
+        """A URL that appeared in no tool result is rejected even when live."""
         turns = [tool_turn("report_result", dict(GOOD_REPORT)),  # no discovery yet
                  tool_turn("fetch_page", {"url": ED_2025}),
                  tool_turn("report_result", dict(GOOD_REPORT))]
@@ -102,8 +99,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(len(invented), 1)
 
     def test_wrong_format_file_rejected(self):
-        """A live parquet file is rejected when the task asked for Shapefile: liveness
-        alone is not relevance."""
+        """A live parquet is rejected when Shapefile was asked for."""
         failure = {"found": False, "failure_reason": "no shapefile found"}
         turns = list(HAPPY_PATH) + [tool_turn("report_result", dict(failure)),
                                     tool_turn("report_result", dict(failure))]
@@ -138,8 +134,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertIn("Atlantis land cover", nudges[0]["content"])
 
     def test_repeated_identical_call_suppressed_not_refetched(self):
-        """The second identical fetch_page is answered from memory with a REPEATED CALL
-        warning and costs no HTTP request; the agent can then continue to success."""
+        """A repeated call is answered from memory and costs no HTTP request."""
         turns = [tool_turn("fetch_page", {"url": PORTAL}),
                  tool_turn("fetch_page", {"url": PORTAL})] + list(HAPPY_PATH)[1:]
         tools = make_tools()
@@ -149,14 +144,11 @@ class TestAgentLoop(unittest.TestCase):
                     if m.get("role") == "tool" and "REPEATED CALL" in m.get("content", "")]
         self.assertEqual(len(repeated), 1)
         self.assertIn("task_reminder", repeated[0]["content"])
-        # HTTP accounting: portal once, feed, edition, probe, verification probe = 5
-        # (the repeat cost nothing)
+        # portal, feed, edition, probe, verification probe = 5; the repeat cost nothing
         self.assertEqual(tools.requests_made, 5)
 
     def test_repeats_abort_the_angle_once_it_is_clearly_stuck(self):
-        """The anti-loop guard used to warn forever. An observed run hit 7 suppressions with
-        zero attempts to finish, burning ~180k tokens for nothing - every further step
-        re-sends the whole conversation."""
+        """The anti-loop guard used to warn forever."""
         turns = [tool_turn("fetch_page", {"url": PORTAL})] + [
             tool_turn("fetch_page", {"url": PORTAL}) for _ in range(6)]
         res, _ = run_agent(turns, max_steps=10)
@@ -168,9 +160,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertGreater(res.usage.total_tokens, 0, "partial cost still reported")
 
     def test_the_guard_still_allows_recovery(self):
-        """Fewer repeats than the threshold must NOT end the angle - a real run recovered at
-        step 7 after one suppression by switching to web_search, which is exactly what the
-        REPEATED CALL message asks for."""
+        """Fewer repeats than the threshold must not end the angle."""
         self.assertGreater(config.GEOFETCH_MAX_REPEATS, 1)
         turns = [tool_turn("fetch_page", {"url": PORTAL}),
                  tool_turn("fetch_page", {"url": PORTAL})] + list(HAPPY_PATH)[1:]
@@ -217,8 +207,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(res.download_url, FILE_URL)
 
     def test_rescued_inline_fetch_call_is_executed(self):
-        """A tool call written as plain text (template drift) is parsed, executed, and its
-        result fed back; the run then succeeds."""
+        """A tool call written as plain text is parsed, executed and fed back."""
         inline = _Msg(content='{"name": "fetch_page", "arguments": '
                               f'{{"url": "{PORTAL}"}}}}')
         res, llm = run_agent([inline] + list(HAPPY_PATH)[1:])
@@ -244,8 +233,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertIn("budget", res.report["failure_reason"])
 
     def test_never_reports_invented_url_that_404s(self):
-        """A fabricated URL is stopped by the guardrail even if the model insists: budget
-        runs out rather than returning a bad URL."""
+        """A fabricated URL is refused even when the model insists."""
         dead = "https://api.atlantis.example/dl/download/FAKE/forest.parquet"
         turns = [tool_turn("report_result", {**GOOD_REPORT, "download_url": dead})] * 4
         res, _ = run_agent(turns, max_steps=4)
@@ -253,9 +241,7 @@ class TestAgentLoop(unittest.TestCase):
         self.assertEqual(res.download_url, "")
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline seam: SearchAngle -> Candidate
-# --------------------------------------------------------------------------- #
+# --- pipeline seam: SearchAngle -> Candidate ---
 
 
 class TestResolveAngle(unittest.TestCase):
@@ -282,23 +268,20 @@ class TestResolveAngle(unittest.TestCase):
         self.assertEqual(found.confidence, config.CONFIDENCE_BY_REPORT["high"])
 
     def test_evidence_stays_a_list_not_joined_prose(self):
-        """The audit trail is structured data; flattening it to a string was the loss this
-        whole shape exists to undo."""
+        """The audit trail stays structured data rather than a flattened string."""
         found, _ = run_stage(list(HAPPY_PATH))
         self.assertIsInstance(found.claim["evidence"], list)
         self.assertEqual(found.claim["evidence"], [PORTAL, FEED, ED_2025, FILE_URL])
 
     def test_string_evidence_is_normalized_to_a_list(self):
-        """Shape is normalized, truth is not - otherwise a consumer iterating `evidence`
-        walks a bare string one character at a time."""
+        """Shape is normalized, truth is not."""
         turns = list(HAPPY_PATH[:-1]) + [
             tool_turn("report_result", {**GOOD_REPORT, "evidence": "found it on page 2"})]
         found, _ = run_stage(turns)
         self.assertEqual(found.claim["evidence"], ["found it on page 2"])
 
     def test_claim_is_a_whitelist_not_a_passthrough(self):
-        """report is model-authored, so an unknown key - especially one that reads like a
-        verification result - must not reach the output."""
+        """An unknown model-authored key must not reach the output."""
         turns = list(HAPPY_PATH[:-1]) + [tool_turn("report_result", {
             **GOOD_REPORT, "ok": True, "payload_type": "parquet", "injected": "nope"})]
         found, _ = run_stage(turns)
@@ -338,8 +321,7 @@ class TestResolveAngle(unittest.TestCase):
         self.assertIn("total_tokens", missed.cost)
 
     def test_llm_transport_error_becomes_an_unresolved_record(self):
-        """A rate limit or timeout that outlives the SDK's retries must not vaporize the
-        angle. The one most likely to be throttled is the one you most need to see."""
+        """A rate limit or timeout that outlives the SDK's retries must not vaporize the angle."""
         import openai
         import httpx
 
@@ -380,8 +362,7 @@ class TestResolveAngle(unittest.TestCase):
                                 "format": ANGLE.format, "vintage": ANGLE.vintage})
 
     def test_no_search_is_spent_before_the_agent_runs(self):
-        """The pre-flight seed search is gone: a blocked engine can no longer kill an angle
-        before it starts. web_search survives as a TOOL the agent may call itself."""
+        """The pre-flight seed search is gone; a blocked engine cannot kill an angle."""
         from beegent.pipeline.geofetch import TOOL_SCHEMAS
         llm = FakeLLM(list(HAPPY_PATH))
         tools = make_tools()
@@ -395,8 +376,7 @@ class TestResolveAngle(unittest.TestCase):
 
 
 class TestFormatContainers(unittest.TestCase):
-    """Bulk geodata ships inside containers - IGN publishes national GeoPackage as split
-    .7z.001 archives. `zip` was already accepted on that reasoning; 7z/gzip complete it."""
+    """Bulk geodata ships inside containers, e.g. split .7z archives."""
 
     HEADS = {"7z": b"7z\xbc\xaf\x27\x1c" + b"\x00" * 10,
              "zip": b"PK\x03\x04" + b"\x00" * 12,
@@ -420,8 +400,7 @@ class TestFormatContainers(unittest.TestCase):
                 self.assertIsNotNone(self._verdict("GeoPackage", kind))
 
     def test_geoparquet_stays_strict(self):
-        """The one place this guardrail earns its keep: a container must NOT satisfy the
-        format that is asked for most often."""
+        """A container must not satisfy the format most often asked for."""
         self.assertIsNotNone(self._verdict("GeoParquet", "parquet"))
         for kind in ("7z", "zip", "gzip"):
             with self.subTest(container=kind):
@@ -429,8 +408,7 @@ class TestFormatContainers(unittest.TestCase):
 
 
 class TestToolResultCap(unittest.TestCase):
-    """Every kept tool result is resent on every step, so an uncapped one is a per-step tax.
-    A 60KB WFS GetCapabilities once drove a single angle to 861k input tokens."""
+    """Every kept tool result is resent on every step, so an uncapped one is a per-step tax."""
 
     def test_oversized_result_is_capped_before_entering_history(self):
         from beegent.pipeline.geofetch import _fit

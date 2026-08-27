@@ -1,11 +1,4 @@
-"""Databricks Model Serving / Unity AI Gateway - the worked example of adding a backend.
-
-Read this file to see what implementing a connector actually costs: a base_url built from a
-workspace host, a token, and the two quirks this backend has. Everything else is inherited.
-
-Model names here are SERVING ENDPOINT names, not bare model names - a 404 usually means the
-endpoint is not called that in your workspace.
-"""
+"""Databricks Model Serving / Unity AI Gateway - the worked example of adding a backend."""
 
 import os
 from typing import Callable
@@ -14,24 +7,17 @@ from beegent.connectors.base import OpenAICompatConnector
 
 
 def serving_base_url(host: str) -> str:
-    """Normalize a workspace host into the OpenAI-compatible serving base URL.
-
-    DATABRICKS_HOST may be pasted either as a bare hostname or as the full https:// URL
-    shown in the UI; accept both rather than silently building an unresolvable base_url.
-    """
+    """Normalize a workspace host into the OpenAI-compatible serving base URL."""
     host = (host or "").removeprefix("https://").removeprefix("http://").rstrip("/")
     return f"https://{host}/serving-endpoints"
 
 
 class DatabricksConnector(OpenAICompatConnector):
     provider = "databricks"
-    # Claude serving endpoints 400 on response_format (INVALID_PARAMETER_VALUE). Every
-    # prompt already asks for JSON-only output and parse_json() falls back to extracting
-    # the outermost {...} from a fenced or prose reply, so leaving it off costs nothing.
+    # Claude serving endpoints 400 on response_format; parse_json() copes without it.
     supports_response_format = False
 
-    # Serving-endpoint names, NOT bare model names - verify with
-    # `GET /api/2.0/serving-endpoints` if any of these ever 404 in your workspace.
+    # Serving-endpoint names, NOT bare model names - a 404 means it is not named this.
     DEFAULT_MODELS = {
         "planner": "databricks-claude-sonnet-4-6",
         "geofetch": "databricks-claude-haiku-4-5",  # the expensive loop: needs native
@@ -46,13 +32,7 @@ class DatabricksConnector(OpenAICompatConnector):
         super().__init__(base_url=serving_base_url(self.host), api_key=self.token, log=log)
 
     def _create(self, model: str, messages: list[dict], **kwargs):
-        """Same call, with one endpoint quirk handled.
-
-        Databricks' Claude endpoints differ from each other: Opus rejects `temperature`
-        while Sonnet and Haiku accept it. Asking and then dropping the parameter beats
-        keeping a per-model capability table in sync with a workspace's endpoints - and a
-        hard failure here would take out the critic, whose whole job is rescuing a weak run.
-        """
+        """Same call, with one endpoint quirk handled."""
         from openai import BadRequestError
 
         try:
@@ -64,11 +44,7 @@ class DatabricksConnector(OpenAICompatConnector):
             kwargs.pop("temperature")
             return super()._create(model, messages, **kwargs)
 
-    # No _token_usage() override: the OpenAI-shaped gateway reports prompt_tokens and
-    # completion_tokens under those names, so the base implementation is correct. If a
-    # metric is ever added that Claude-behind-Databricks spells differently, override it
-    # HERE - and only after dumping a real `usage` object from the endpoint. A guessed
-    # field name yields a zero that is indistinguishable from "not reported".
+    # A metric this gateway spells differently gets a _token_usage() override here.
 
     def validate(self) -> str | None:
         if not self.host:

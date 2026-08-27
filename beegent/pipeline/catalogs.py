@@ -1,13 +1,4 @@
-"""
-Deterministic (no LLM) lookups against known open data catalogs - the non-agentic route
-to candidates, as opposed to geofetch reasoning its way to one. Deliberately empty for now.
-
-Contract if this is ever built: whatever it returns lands in `run.candidates` alongside
-geofetch's output, so it must uphold the same guarantee - a Candidate with a `resource_url`
-must also carry a `verification` block from an actual probe. Use
-`beegent.web_tools.WebTools.probe_url()` for that; do not hand back a catalog's advertised
-download URL untested, since nothing downstream checks it.
-"""
+"""Deterministic catalog lookups - the non-agentic route to candidates."""
 
 from beegent.schemas import Candidate
 

@@ -37,8 +37,7 @@ class TestRank(unittest.TestCase):
 
 
 class TestThrottledAngleReachesTheOutput(unittest.TestCase):
-    """The regression that motivated failing soft: before this, an angle whose LLM call
-    errored left no trace at all in candidate_list.json - no unresolved entry, no cost."""
+    """Before failing soft, an angle whose LLM call errored left no trace at all."""
 
     def test_discover_records_the_failed_angle(self):
         from beegent import run as runmod
@@ -72,8 +71,7 @@ class TestThrottledAngleReachesTheOutput(unittest.TestCase):
 
 
 class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
-    """run.totals used to sum only Candidate.cost, so every planner and critic token was
-    invisible - the meter says a run cost less than it did."""
+    """run.totals summed only Candidate.cost, so planner and critic tokens were invisible."""
 
     PLAN = {"angles": [{"description": "d", "url": "https://ok.example/p",
                         "dataset": "d", "format": "GeoParquet"}]}
@@ -105,8 +103,7 @@ class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
                   "completion_tokens": 1_000, "total_tokens": 6_000}), None
 
     def test_planner_bucket_reaches_totals_on_the_early_ok_exit(self):
-        """The gate passes, so discover() returns at its FIRST exit - the common path, and
-        the one that would silently under-report if only the last return folded the meter."""
+        """The gate passes, so discover() returns at its first exit - the common path."""
         from beegent import run as runmod
 
         self._install()
@@ -136,8 +133,7 @@ class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
         self.assertEqual(t["total_tokens"], 1_000 + 1_000 + 400)
 
     def test_geofetch_is_not_double_counted(self):
-        """Geofetch usage rides on Candidate.cost and is deliberately kept OUT of the
-        meter; metering it there as well would count every angle twice."""
+        """Geofetch rides on Candidate.cost and is kept out of the meter, so nothing doubles."""
         from beegent import run as runmod
 
         self._install()

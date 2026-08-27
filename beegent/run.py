@@ -1,13 +1,4 @@
-"""CLI for the discovery-phase POC.
-
-    python -m beegent.run --country Kenya --use-case "administrative boundaries for a flood dashboard"
-
-Runs planner -> catalogs -> geofetch (per angle) -> escalation gate -> critic,
-and writes candidate_list.json either way.
-
-Every candidate that reaches the output has had its resource_url independently probed by
-beegent/pipeline/geofetch.py - an unverified URL cannot get here.
-"""
+"""CLI for the discovery-phase POC."""
 
 import argparse
 import json
@@ -29,13 +20,7 @@ from beegent.web_tools import normalize_url
 
 
 def _rank(candidates: list[Candidate]) -> list[Candidate]:
-    """Order the pool and cap it. Not triage - there is no judgement here.
-
-    Deduping is the one merge job that survives: two angles can chase different framings of
-    the same dataset and land on the same file, and a re-plan can re-find what iteration 1
-    already verified. First occurrence wins, and since carried candidates are passed in
-    first, a re-found duplicate never displaces the one already in the list.
-    """
+    """Order the pool and cap it."""
     best: dict[str, Candidate] = {}
     for cand in candidates:
         best.setdefault(normalize_url(cand.resource_url or cand.url), cand)
@@ -56,15 +41,7 @@ def _add_role(totals: dict, role: str, usage: TokenUsage) -> None:
 
 
 def _finalize(run: DiscoveryRun) -> DiscoveryRun:
-    """Fold the per-role LLM meter into run.totals, then hand the run back.
-
-    EVERY exit from discover() returns through here - including the early "ok" one, which
-    is the common case - so planner and critic spend is recorded whichever branch ended the
-    run. Miss one and the cheapest, most frequent path is the one that under-reports.
-
-    Geofetch is not in the meter: its tokens are already in totals, accumulated per angle
-    from Candidate.cost. That split is what keeps nothing counted twice.
-    """
+    """Fold the per-role LLM meter into run.totals, then hand the run back."""
     for role, usage in usage_by_role().items():
         _add_role(run.totals, role, usage)
         run.totals["prompt_tokens"] += usage.prompt_tokens
@@ -80,17 +57,13 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         max_iterations=config.MAX_ITERATIONS,
         backend=get_connector().provider,
         models={r: get_connector().model_for(r) for r in get_connector().ROLES},
-        # Accumulated as angles finish, never summed from run.candidates at the end:
-        # run.unresolved is replaced each iteration, so a final sum would silently
-        # under-count every dead end from iteration 1.
+        # Accumulated as angles finish; unresolved is replaced each iteration.
         totals=dict.fromkeys(("angles_run",) + _COST_KEYS, 0) | {"by_role": {}},
     )
-    # The meter is module-level, so a second discover() in one process would otherwise
-    # inherit the first run's planner and critic tokens.
+    # Module-level, so a second discover() would otherwise inherit the first run's tokens.
     reset_usage()
 
-    # Catalog workers are deterministic and query-independent enough to run once;
-    # their results seed every planner attempt.
+    # Deterministic and query-independent, so run once and seed every planner attempt.
     print("[catalog] querying catalogs")
     catalog_hits = query_catalogs(country, use_case)
 
@@ -105,10 +78,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         for angle in angles:
             print(f"  - [{angle.channel_hint}] {angle.description}")
 
-        # Carried candidates go in first: they already resolved to a verified file, so
-        # they win any collision and are never squeezed out by a re-found duplicate. A
-        # re-plan must add to the pool, not restart it - otherwise a good hit from
-        # iteration 1 silently vanishes because iteration 2 didn't happen to re-find it.
+        # Carried first, so an already-verified file wins any dedupe collision.
         if carried:
             print(f"[carry] {len(carried)} verified from iteration {iteration - 1}")
 
@@ -125,9 +95,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 fresh.append(found)
             elif missed:
                 misses.append(missed)
-            # Cost is carried on whichever slot came back. When both are None the angle
-            # died in its seed search, and that one request goes unrecorded - not worth
-            # widening resolve_angle()'s return signature to capture.
+            # Cost rides on whichever slot came back.
             if found or missed:
                 run.totals["angles_run"] += 1
                 cost = (found or missed).cost
@@ -177,40 +145,33 @@ def main() -> None:
     parser.add_argument("--country", required=True)
     parser.add_argument("--use-case", required=True, dest="use_case")
     parser.add_argument("--out", default="candidate_list.json")
-    # choices is evaluated here, not at import, so a connector registered at runtime by a
-    # wrapper script is offered too.
+    # Evaluated here, not at import, so a runtime-registered connector is offered too.
     parser.add_argument("--backend", choices=sorted(CONNECTORS),
                         help="LLM backend (default: $LLM_BACKEND, else ollama)")
-    # One flag per pipeline role, generated rather than written out, so adding a role to
-    # LLMConnector.ROLES gives it a CLI flag for free - the same way ROLES already drives
-    # the banner and DiscoveryRun.models.
+    # One generated flag per role, so a new role gets a CLI flag for free.
     for role in LLMConnector.ROLES:
         parser.add_argument(f"--{role}-model", dest=f"{role}_model", metavar="NAME",
                             help=f"model for the {role} step "
                                  f"(default: ${role.upper()}_MODEL, else the backend's)")
     args = parser.parse_args()
 
-    # Precedence: CLI > environment > .env > the connector's DEFAULT_MODELS. The first two
-    # are applied here; load_dotenv(override=False) is what puts .env below the environment.
+    # Precedence: CLI > environment > .env > the connector's DEFAULT_MODELS.
     if args.backend:
         select_backend(args.backend)
     for role in LLMConnector.ROLES:
         value = getattr(args, f"{role}_model")
         if value:
-            # Deliberately the same channel model_for() already reads, so precedence lives
-            # in one place instead of being re-implemented at the CLI layer.
+            # The same channel model_for() reads, so precedence lives in one place.
             os.environ[f"{role.upper()}_MODEL"] = value
 
     connector = get_connector()
-    # Fail before spending a run on a bad endpoint: a wrong serving-endpoint name otherwise
-    # surfaces as a 404 partway through an angle, after tokens are already gone.
+    # Fail before spending a run: a bad endpoint name otherwise 404s mid-angle.
     problem = connector.validate()
     if problem:
         raise SystemExit(f"error: {problem}")
 
     started = time.time()
-    # What was asked, then what will answer it. The use case is repr()'d because it is free
-    # text: `use-case=''` reads unambiguously where a bare `use-case=` would not.
+    # repr()'d because it is free text: `use-case=''` reads unambiguously.
     print(f"[input]  country={args.country}  use-case={args.use_case!r}")
     print(
         f"[config] backend={connector.provider}  "
@@ -250,8 +211,7 @@ def main() -> None:
         f"{t['total_tokens']:,} tokens "
         f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
     )
-    # Where the tokens went. Biggest spender first - on a run that found nothing this is
-    # how you see whether the planner or the critic was the one burning them.
+    # Where the tokens went, biggest spender first.
     by_role = t.get("by_role") or {}
     if by_role:
         parts = "  |  ".join(

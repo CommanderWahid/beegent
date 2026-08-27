@@ -1,9 +1,4 @@
-"""Shared fixtures: a synthetic portal for a FICTIONAL country.
-
-Deliberately not any real portal - if anything real leaked into the harness, these tests
-would be the thing that stops noticing. A plain module rather than a pytest conftest, so it
-works under `unittest discover` and pytest alike.
-"""
+"""Shared fixtures: a synthetic portal for a FICTIONAL country."""
 
 import json
 
@@ -45,8 +40,7 @@ PARQUET_HEAD = b"PAR1" + b"\x00" * 12
 
 
 def fake_transport(pages: dict, binaries: dict):
-    """Build a transport closure over {url: (status, ctype, body)} pages and
-    {url: total_size} binary files (which honour Range requests)."""
+    """Build a transport closure over fake pages and Range-honouring binary files."""
     def transport(method, url, headers, max_bytes):
         if url in binaries:
             total = binaries[url]
@@ -79,9 +73,7 @@ def make_tools(pages=None, binaries=None):
                                              binaries or {FILE_URL: FILE_SIZE}))
 
 
-# --------------------------------------------------------------------------- #
-# Scripted LLM (shaped like the OpenAI SDK message chat_tools returns)
-# --------------------------------------------------------------------------- #
+# --- scripted LLM, shaped like the SDK message chat_tools returns ---
 
 _CALL_N = [0]
 
@@ -108,15 +100,13 @@ class _Msg:
 
 
 class FakeLLM:
-    """Scripted stand-in for beegent.llm.chat_tools: pops one (message, usage) pair per call
-    and records the message history it was handed."""
+    """Scripted chat_tools: pops one (message, usage) pair per call, records the history."""
 
     def __init__(self, turns, raise_on=None, error=None):
         self.turns = list(turns)
         self.seen_messages = []
         self.chat_calls = 0
-        # raise_on: 1-based call number that should blow up instead of returning a turn,
-        # standing in for a rate limit or a timeout that outlived the SDK's own retries.
+        # raise_on: 1-based call number that blows up instead of returning a turn.
         self.raise_on = raise_on
         self.error = error or RuntimeError("boom")
 
@@ -151,9 +141,7 @@ HAPPY_PATH = [
 ]
 
 
-# --------------------------------------------------------------------------- #
-# Tool-layer tests
-# --------------------------------------------------------------------------- #
+# --- tool-layer tests ---
 
 
 def _cand(url, resource, conf=0.95):
