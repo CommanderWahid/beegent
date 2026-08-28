@@ -76,7 +76,7 @@ def parse_json(raw: str) -> dict | None:
 
 
 def chat_json(role: str, messages: list[dict]) -> tuple:
-    """One JSON-mode completion, retried once."""
+    """One JSON-mode completion, retried once -> (data, TokenUsage); unpack before testing."""
     c = get_connector()
     data, usage = c.chat_json(c.model_for(role), messages)
     _usage.setdefault(role, TokenUsage()).add(usage)
@@ -84,7 +84,7 @@ def chat_json(role: str, messages: list[dict]) -> tuple:
 
 
 def chat_tools(role: str, messages: list[dict], tools: list[dict]) -> tuple:
-    """One tool-calling completion."""
+    """One tool-calling completion -> (message, TokenUsage)."""
     c = get_connector()
     return c.chat_tools(c.model_for(role), messages, tools)
 

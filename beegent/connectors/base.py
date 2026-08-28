@@ -36,11 +36,11 @@ class LLMConnector(ABC):
 
     @abstractmethod
     def chat_json(self, model: str, messages: list[dict]) -> tuple:
-        """One JSON-mode completion."""
+        """One JSON-mode completion -> (data, TokenUsage); data None means no answer."""
 
     @abstractmethod
     def chat_tools(self, model: str, messages: list[dict], tools: list[dict]) -> tuple:
-        """One tool-calling completion."""
+        """One tool-calling completion -> (message, TokenUsage)."""
 
     @abstractmethod
     def validate(self) -> str | None:

@@ -189,7 +189,7 @@ class GeofetchAgent:
         self._task_format = fmt
         self._discovered.add(normalize_url(start_url))
         self._call_seen: dict[str, int] = {}  # exact call -> first step it ran at
-        repeats = 0  # suppressed duplicates; enough of them means the model is stuck
+        self._repeats = 0  # enough suppressed duplicates means the model is stuck
         user = "Resolve this download URL:\n" + json.dumps(task, indent=2)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -220,96 +220,92 @@ class GeofetchAgent:
 
             tool_calls = list(getattr(msg, "tool_calls", None) or [])
 
-            if not tool_calls:
+            if tool_calls:
+                calls = [(c.function.name, _args_of(c), c.id) for c in tool_calls]
+            else:
                 rescued = extract_inline_tool_call(content)
                 if rescued is None:
                     messages.append({"role": "user", "content":
                                      "Continue using tools, or call report_result. "
                                      "REMINDER of the task: " + self._task_json})
                     continue
-                # Template drift: run the plain-text call anyway, then remind the model.
-                name, args = rescued
-                self.log(f"[step {step}] rescued inline {name} call")
-                result.transcript.append({"step": step, "tool": name,
-                                          "args": args, "rescued": True})
-                if name == "report_result":
-                    args = coerce_report_args(args)
-                    outcome = self._handle_report(args)
-                    if outcome is not None:
-                        return _finish(result, outcome, args)
-                    messages.append({"role": "user", "content": json.dumps({
-                        "error": self._reject_reason,
-                        "probe": self._last_probe,
-                        "task_reminder": self._task_json})
-                        + " Also: emit REAL tool calls, not JSON as text."})
-                    continue
-                tool_result = self._dispatch(name, args)
-                payload = json.dumps(tool_result)
-                self._harvest(payload)
-                messages.append({"role": "user", "content":
-                                 f"Result of your {name} call (you wrote it as plain "
-                                 "text - emit REAL tool calls next time): " + _fit(payload)})
-                continue
+                # Template drift: run the plain-text call anyway, with call_id None.
+                calls = [(rescued[0], rescued[1], None)]
 
-            for call in tool_calls:
-                name = call.function.name
-                try:
-                    args = json.loads(call.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                self.log(f"[step {step}] -> {name}({json.dumps(args)[:200]})")
-                result.transcript.append({"step": step, "tool": name, "args": args})
-
-                if name == "report_result":
-                    outcome = self._handle_report(args)
-                    if outcome is not None:  # accepted, or an honest give-up
-                        return _finish(result, outcome, args)
-                    messages.append({  # rejected: bounce it back and keep searching
-                        "role": "tool", "tool_call_id": call.id,
-                        "content": json.dumps({
-                            "error": self._reject_reason,
-                            "probe": self._last_probe,
-                            "task_reminder": self._task_json})})
-                    continue
-
-                # Anti-loop: an identical call is answered from memory, costing no budget.
-                call_key = name + ":" + json.dumps(args, sort_keys=True)
-                first = self._call_seen.get(call_key)
-                if first is not None:
-                    repeats += 1
-                    self.log(f"  (repeated call suppressed: {name}, "
-                             f"{repeats}/{config.GEOFETCH_MAX_REPEATS})")
-                    if repeats >= config.GEOFETCH_MAX_REPEATS:
-                        # A stuck angle gets more expensive per step while producing nothing.
-                        self.log(f"[step {step}] aborted: not converging "
-                                 f"({repeats} repeated calls)")
-                        result.report = {
-                            "found": False,
-                            "failure_reason": f"gave up: {repeats} repeated tool calls, "
-                                              "the agent was not converging",
-                        }
-                        return result
-                    messages.append({
-                        "role": "tool", "tool_call_id": call.id,
-                        "content": json.dumps({
-                            "error": f"REPEATED CALL: you already ran this exact {name} "
-                                     f"call at step {first} and the result has not "
-                                     "changed. Do something DIFFERENT: follow a link or "
-                                     "URL you already saw, try a platform API convention "
-                                     "(see methodology), or change the query.",
-                            "task_reminder": self._task_json})})
-                    continue
-                self._call_seen[call_key] = step
-
-                tool_result = self._dispatch(name, args)
-                payload = json.dumps(tool_result)
-                self._harvest(payload)  # harvest URLs from the FULL payload, then truncate
-                messages.append({"role": "tool", "tool_call_id": call.id,
-                                 "content": _fit(payload)})
+            for name, args, call_id in calls:
+                if self._run_call(step, name, args, messages, result, call_id):
+                    return result
 
         result.report = {"found": False,
                          "failure_reason": f"step budget ({self.max_steps}) exhausted"}
         return result
+
+    def _reply(self, call_id, content: str) -> dict:
+        """One reply, in whichever shape the call arrived as."""
+        if call_id is None:
+            return {"role": "user", "content": content}
+        return {"role": "tool", "tool_call_id": call_id, "content": content}
+
+    def _run_call(self, step: int, name: str, args: dict, messages: list,
+                  result: "AgentResult", call_id=None) -> bool:
+        """Execute one call from either path; True means the run is over."""
+        rescued = call_id is None
+        self.log(f"[step {step}] rescued inline {name} call" if rescued
+                 else f"[step {step}] -> {name}({json.dumps(args)[:200]})")
+        entry = {"step": step, "tool": name, "args": args}
+        if rescued:
+            entry["rescued"] = True
+        result.transcript.append(entry)
+
+        if name == "report_result":
+            if rescued:
+                args = coerce_report_args(args)
+            outcome = self._handle_report(args)
+            if outcome is not None:  # accepted, or an honest give-up
+                _finish(result, outcome, args)
+                return True
+            body = json.dumps({"error": self._reject_reason,  # rejected: bounce it back
+                               "probe": self._last_probe,
+                               "task_reminder": self._task_json})
+            if rescued:
+                body += " Also: emit REAL tool calls, not JSON as text."
+            messages.append(self._reply(call_id, body))
+            return False
+
+        # Anti-loop: an identical call is answered from memory, costing no budget.
+        call_key = name + ":" + json.dumps(args, sort_keys=True)
+        first = self._call_seen.get(call_key)
+        if first is not None:
+            self._repeats += 1
+            self.log(f"  (repeated call suppressed: {name}, "
+                     f"{self._repeats}/{config.GEOFETCH_MAX_REPEATS})")
+            if self._repeats >= config.GEOFETCH_MAX_REPEATS:
+                # A stuck angle gets more expensive per step while producing nothing.
+                self.log(f"[step {step}] aborted: not converging "
+                         f"({self._repeats} repeated calls)")
+                result.report = {
+                    "found": False,
+                    "failure_reason": f"gave up: {self._repeats} repeated tool calls, "
+                                      "the agent was not converging",
+                }
+                return True
+            messages.append(self._reply(call_id, json.dumps({
+                "error": f"REPEATED CALL: you already ran this exact {name} call at step "
+                         f"{first} and the result has not changed. Do something DIFFERENT: "
+                         "follow a link or URL you already saw, try a platform API "
+                         "convention (see methodology), or change the query.",
+                "task_reminder": self._task_json})))
+            return False
+        self._call_seen[call_key] = step
+
+        payload = json.dumps(self._dispatch(name, args))
+        self._harvest(payload)  # harvest URLs from the FULL payload, then truncate
+        content = _fit(payload)
+        if rescued:
+            content = (f"Result of your {name} call (you wrote it as plain text - emit "
+                       "REAL tool calls next time): " + content)
+        messages.append(self._reply(call_id, content))
+        return False
 
     def _handle_report(self, args: dict) -> dict | None:
         """Trust-but-verify: re-probe reported URLs ourselves."""
@@ -347,7 +343,7 @@ class GeofetchAgent:
         fmt_l = (self._task_format or "").lower()
         allowed = FORMAT_PAYLOADS.get(fmt_l)
         if allowed is not None:
-            ok = status_ok and payload in allowed
+            ok = status_ok  # a mismatch returns below, so reaching the end means it matched
             if status_ok and payload not in allowed:
                 self._reject_reason = (
                     f"REPORT REJECTED: the file is '{payload}' but the task asks for "
@@ -368,13 +364,20 @@ class GeofetchAgent:
         return {"found": True, "download_url": url, "verification": probe}
 
 
+def _args_of(call) -> dict:
+    """A native tool call's arguments, tolerating malformed JSON."""
+    try:
+        return json.loads(call.function.arguments or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
 def _finish(result: AgentResult, outcome: dict, args: dict) -> AgentResult:
     result.found = outcome["found"]
     result.download_url = outcome.get("download_url", "")
     result.report = args
     result.verification = outcome.get("verification", {})
     return result
-
 
 
 def _fit(payload: str) -> str:
@@ -422,7 +425,7 @@ def extract_inline_tool_call(text: str) -> tuple | None:
 
 
 def coerce_report_args(args: dict) -> dict:
-    """Normalize a malformed report_result (e.g."""
+    """Normalize a malformed report_result: url -> download_url, bare error -> found false."""
     out = dict(args)
     if not out.get("download_url") and out.get("url"):
         out["download_url"] = out["url"]  # common field-name slip

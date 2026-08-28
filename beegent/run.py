@@ -32,31 +32,34 @@ _COST_KEYS = ("http_requests", "prompt_tokens", "completion_tokens", "total_toke
 _TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 
+def _add_tokens(dst: dict, usage: TokenUsage) -> None:
+    """Add one usage record into any dict carrying the three token keys."""
+    dst["prompt_tokens"] += usage.prompt_tokens
+    dst["completion_tokens"] += usage.completion_tokens
+    dst["total_tokens"] += usage.total_tokens
+
+
 def _add_role(totals: dict, role: str, usage: TokenUsage) -> None:
-    """Add one role's tokens to its bucket in totals["by_role"]."""
-    bucket = totals["by_role"].setdefault(role, dict.fromkeys(_TOKEN_KEYS, 0))
-    bucket["prompt_tokens"] += usage.prompt_tokens
-    bucket["completion_tokens"] += usage.completion_tokens
-    bucket["total_tokens"] += usage.total_tokens
+    """Charge one role, to its by_role bucket and the run total together."""
+    _add_tokens(totals["by_role"].setdefault(role, dict.fromkeys(_TOKEN_KEYS, 0)), usage)
+    _add_tokens(totals, usage)
 
 
 def _finalize(run: DiscoveryRun) -> DiscoveryRun:
     """Fold the per-role LLM meter into run.totals, then hand the run back."""
     for role, usage in usage_by_role().items():
         _add_role(run.totals, role, usage)
-        run.totals["prompt_tokens"] += usage.prompt_tokens
-        run.totals["completion_tokens"] += usage.completion_tokens
-        run.totals["total_tokens"] += usage.total_tokens
     return run
 
 
 def discover(country: str, use_case: str) -> DiscoveryRun:
+    connector = get_connector()
     run = DiscoveryRun(
         country=country,
         use_case=use_case,
         max_iterations=config.MAX_ITERATIONS,
-        backend=get_connector().provider,
-        models={r: get_connector().model_for(r) for r in get_connector().ROLES},
+        backend=connector.provider,
+        models={r: connector.model_for(r) for r in connector.ROLES},
         # Accumulated as angles finish; unresolved is replaced each iteration.
         totals=dict.fromkeys(("angles_run",) + _COST_KEYS, 0) | {"by_role": {}},
     )
@@ -99,8 +102,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
             if found or missed:
                 run.totals["angles_run"] += 1
                 cost = (found or missed).cost
-                for key in _COST_KEYS:
-                    run.totals[key] += cost.get(key, 0)
+                run.totals["http_requests"] += cost.get("http_requests", 0)
                 _add_role(run.totals, "geofetch",
                           TokenUsage(prompt_tokens=cost.get("prompt_tokens", 0),
                                      completion_tokens=cost.get("completion_tokens", 0)))

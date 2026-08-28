@@ -218,6 +218,16 @@ class TestAgentLoop(unittest.TestCase):
                        and "Result of your fetch_page call" in m.get("content", "")]
         self.assertEqual(len(rescue_msgs), 1)
 
+    def test_repeated_inline_call_hits_the_anti_loop_guard(self):
+        """The rescue path used to skip _call_seen and loop to the step budget."""
+        inline = _Msg(content='{"name": "fetch_page", "arguments": '
+                              f'{{"url": "{PORTAL}"}}}}')
+        res, _ = run_agent([inline] * 8, max_steps=8)
+        self.assertFalse(res.found)
+        self.assertIn("not converging", res.report["failure_reason"])
+        self.assertLess(res.steps_used, 8, "must abort before the step budget")
+        self.assertEqual(res.steps_used, config.GEOFETCH_MAX_REPEATS + 1)
+
     def test_rescued_malformed_failure_report_ends_run_after_effort(self):
         tools = make_tools()
         tools.requests_made = 12  # effort already spent
