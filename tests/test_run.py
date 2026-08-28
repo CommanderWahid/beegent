@@ -91,7 +91,9 @@ class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
             def validate(self):
                 return None
 
-        self.enterContext(mock.patch.object(llm, "_connector", C()))
+        patcher = mock.patch.object(llm, "_connector", C())  # not enterContext: 3.11+
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.addCleanup(llm.reset_usage)
 
     @staticmethod

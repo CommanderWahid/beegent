@@ -2,98 +2,149 @@
 
 # <img src="assets/beegent_logo.svg" alt="" height="72" valign="middle" /> Beegent
 
-![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
-![Status: proof of concept](https://img.shields.io/badge/status-proof--of--concept-yellow)
+**Find geospatial data for any country and use case — and verify it actually downloads.**
 
-**Open-source multi-agent pipeline that turns a `(country, use_case)` pair into a review-ready list of candidate geospatial data sources.**
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
+[Getting started](docs/getting-started.md) ·
+[Documentation](docs/README.md)
 
 </div>
 
-A planner, a catalog lookup, a per-angle fetch agent, and an escalation/critic loop run as
-chained agents to find, **verify**, and hand off candidates — turning a day of manual
-searching and tab-switching into a review-ready draft in minutes.
+---
 
-Every candidate that reaches the output has had its download URL independently re-probed by
-the harness: the right HTTP status, and magic bytes matching the format that was asked for.
-A URL the model made up, or one that only *looks* like a download, cannot get through.
-
-Accelerates the **technical scoping** step of your ingestion process:
-
-```
-business scoping -> [technical scoping: THIS TOOL] -> dev pipeline -> validation -> deployment
-```
-
-Today that step is manual: search the internet for a country/use-case's data, open a handful
-of endpoints, compare them, explore columns, define a source-to-target mapping, and write up
-metadata — before the dev pipeline work can even start. This is a working prototype of that
-gap-closing step, not a polished system.
-
-## Quick start
+Give Beegent a country and a use case. It plans several routes to the data, sends an agent down
+each one, and returns the download URLs it could **prove** are real.
 
 ```bash
-uv sync
-ollama pull deepseek-r1:14b qwen3:8b     # the default backend is local Ollama
-
-uv run python -m beegent.run --country Kenya \
-  --use-case "administrative boundaries for a flood-response dashboard"
+uv run python -m beegent.run --country France --use-case "building footprints as a geoparquet file"
 ```
 
-Writes `candidate_list.json` (override with `--out`) and logs a run summary to stdout. Search
-needs **no API key** — it is a keyless DuckDuckGo → Bing fallback chain. Databricks and other
-backends: see [docs/backends.md](docs/backends.md).
+Every URL in the output has been independently re-fetched by the harness — right HTTP status, and
+magic bytes matching the format that was asked for. A URL the model invented, or one that only
+*looks* like a download, cannot get through.
+
+## What a run looks like
+
+One angle resolving against a live French government portal, from the start URL to a verified
+file in five steps:
+
+```
+    [geofetch] task: url      = https://cadastre.data.gouv.fr/data/etalab-cadastre/latest/
+    [geofetch]       dataset  = 'cadastral building footprints (batiments), whole France'
+    [geofetch]       format   = 'GeoParquet'
+    [geofetch]       vintage  = 'latest'
+[step 1] -> fetch_page({"url": ".../etalab-cadastre/latest/"})
+[step 2] -> fetch_page({"url": ".../etalab-cadastre/2026-06-01/geoparquet/"})
+[step 3] -> fetch_page({"url": ".../2026-06-01/geoparquet/france/"})
+[step 4] -> probe_url({"url": ".../geoparquet/france/cadastre.parquet"})
+[step 5] -> report_result({"found": true, "confidence": "high", ...})
+    [geofetch] VERIFIED in 5 step(s), 5 request(s), 12,916 tokens
+    [geofetch] path: fetch_page -> fetch_page -> fetch_page -> probe_url -> report_result
+```
+
+The agent was given a starting URL and a description. It found the current edition, walked to the
+national file, and probed it. The harness then re-probed that URL itself before accepting it:
+
+```json
+{
+  "resource_url": "https://cadastre.data.gouv.fr/.../france/cadastre.parquet",
+  "confidence": 0.95,
+  "verification": {
+    "ok": true, "status": 206, "payload_type": "parquet",
+    "first_bytes_hex": "50415231150415ba"
+  }
+}
+```
+
+`50415231` is `PAR1` — the four bytes that begin every Parquet file. That is the proof, read off
+the wire.
+
+## Why
+
+Technical scoping is manual work: search for a country's data, open a dozen endpoints, work out
+which are real, compare editions, write it up.
+
+```
+business scoping -> [technical scoping: BEEGENT] -> dev pipeline -> validation -> deployment
+```
+
+Beegent turns that into a review-ready draft. It does not replace the review — it does the
+searching, and refuses to hand you anything it could not download.
 
 ## How it works
 
-```mermaid
-flowchart TD
-    IN["python -m beegent.run<br/>--country --use-case"]
-    PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one IS the fetcher's 4 params:<br/>url + dataset + format + vintage"]
-    CAT["catalogs<br/>deliberately an empty stub"]
-    GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each"]
-    RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
-    GATE{"escalation gate · no LLM<br/>nothing verified at all?"}
-    CRITIC["critic · 1 LLM call<br/>replan or needs_human_review"]
-    UNRES["unresolved[]<br/>claim.failure_reason + cost"]
-    OUT["candidate_list.json"]
+Four stages. A planner turns your use case into distinct **angles** — each one a concrete fetch
+order, not a search query. An agent chases each angle with three tools (`fetch_page`,
+`web_search`, `probe_url`) and can only finish by reporting a result, which the harness verifies
+itself. If nothing was verified, a critic decides whether to re-plan or ask for a human.
 
-    IN --> PLAN
-    IN --> CAT
-    PLAN -->|SearchAngle| GF
-    CAT --> RANK
-    GF -->|verified Candidate| RANK
-    GF -->|dead end| UNRES
-    RANK --> GATE
-    UNRES --> GATE
-    GATE -->|pass| OUT
-    GATE -->|escalate| CRITIC
-    CRITIC -->|replan · max 2 iterations| PLAN
-    CRITIC -->|needs_human_review| OUT
+```
+planner -> catalogs -> geofetch (per angle) -> gate -> critic -> (replan | needs_human_review)
 ```
 
-An **angle is a fetch order, not a search query**: the planner decides *where to start, which
-dataset, in which format, of which vintage*. A downstream agent chases it to a file, and can only
-finish by calling `report_result` — which the harness then re-probes itself before accepting.
+Nothing in the codebase knows about any specific portal, vendor or country: the prompt teaches
+generic catalogue conventions (CKAN, udata, DCAT, STAC, OGC), and the test suite runs the whole
+agent against a portal for a country that does not exist.
 
-The tools are deterministic and dumb on purpose. All the intelligence is in the model, and nothing
-in the codebase knows about any specific portal, vendor or country.
+See [Architecture](docs/architecture.md) and [The geofetch agent](docs/geofetch.md).
+
+## Install
+
+```bash
+git clone https://github.com/CommanderWahid/beegent.git
+cd beegent
+uv sync
+
+ollama pull deepseek-r1:14b qwen3:8b     # default backend is local Ollama
+OLLAMA_CONTEXT_LENGTH=16384 ollama serve
+```
+
+No API keys. Search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs
+locally. Databricks and other backends: [Backends](docs/backends.md).
+
+Full walkthrough: [Getting started](docs/getting-started.md).
+
+## Status
+
+**Working prototype.** It resolves real datasets on live portals, and the verification guarantee
+holds. Known limits, stated plainly:
+
+- The **catalog stage is an empty stub** — the catalog layer is unbuilt.
+- **No JavaScript execution.** A download that only appears after a client-side interaction is
+  unreachable, and is reported as an honest failure rather than guessed at.
+- Results depend on the model. Small local models miss things a larger one finds.
+- Portal APIs change. An angle that worked last month may dead-end today.
+
+Pre-1.0: interfaces may change.
 
 ## Documentation
 
 | | |
 |---|---|
-| [Pipeline](docs/pipeline.md) | each stage in order, the angle contract, re-planning and the escalation gate |
-| [Geofetch](docs/geofetch.md) | the agent loop diagram, its three tools, the five guardrails, small-model survival |
-| [Output](docs/output.md) | `candidate_list.json` schema and the claim / verification / cost trust split |
-| [Backends](docs/backends.md) | Ollama and Databricks setup, adding a connector, role→model precedence |
-| [Optimizations](docs/optimizations.md) | the cost model and what was tuned per stage, with measured numbers |
+| [Getting started](docs/getting-started.md) | Install, first run, reading the result |
+| [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
+| [Backends](docs/backends.md) | Ollama, Databricks, writing a connector |
+| [Architecture](docs/architecture.md) | The four stages and how a run flows |
+| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the five guardrails |
+| [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
+| [Performance](docs/performance.md) | What a run costs and which settings move it |
+| [Troubleshooting](docs/troubleshooting.md) | Symptoms, causes, fixes |
+| [Design notes](docs/design-notes.md) | Why it is built this way |
 
-## Tests
+## Development
+
+The test suite is fully offline — no network, no API key, no LLM — so you can work on the agent
+loop without spending a token:
 
 ```bash
-uv run python -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v      # 102 tests, ~1s
+uvx ruff check --select F,ERA .
 ```
 
-102 tests, fully offline — no network, no API key, no LLM. The agent loop is exercised by a
-scripted fake model navigating a synthetic portal for a fictional country, which is also what
-proves no real portal is hardcoded anywhere. Coverage includes every guardrail: an invented URL, a
-wrong-format file, a premature give-up, a repeated call, and a tool call written as plain text.
+Runs on Python 3.10, 3.11 and 3.12.
+
+## License
+
+[Apache 2.0](LICENSE).

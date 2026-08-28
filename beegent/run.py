@@ -147,8 +147,9 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s",
-                        stream=sys.stdout)
+    # Root stays at WARNING so httpx/openai INFO chatter does not leak into our output.
+    logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stdout)
+    logging.getLogger("beegent").setLevel(logging.INFO)
     parser = argparse.ArgumentParser(description="Discovery phase POC")
     parser.add_argument("--country", required=True)
     parser.add_argument("--use-case", required=True, dest="use_case")

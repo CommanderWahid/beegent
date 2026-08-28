@@ -253,7 +253,9 @@ class TestCliOverrides(unittest.TestCase):
 
     def setUp(self):
         """main() configures ROOT logging, which would leak into every later test."""
-        self.enterContext(mock.patch("logging.basicConfig"))
+        patcher = mock.patch("logging.basicConfig")  # not enterContext: that is 3.11+
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _banner(self, argv, env=None):
         import sys
