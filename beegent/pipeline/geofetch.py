@@ -1,5 +1,6 @@
 """Geofetch: the per-angle worker."""
 
+import logging
 import json
 import re
 from dataclasses import dataclass, field
@@ -9,6 +10,8 @@ from beegent import config
 from beegent.llm import chat_tools, message_text, strip_think, to_message_dict
 from beegent.schemas import Candidate, SearchAngle, TokenUsage
 from beegent.web_tools import WebTools, _URL_RE, normalize_url
+
+_log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You are a download-URL resolver agent for open geodata (or any open data).
@@ -467,7 +470,7 @@ def _cost(result: AgentResult, tools: WebTools) -> dict:
 
 
 def resolve_angle(
-    angle: SearchAngle, log: Callable[[str], None] = print,
+    angle: SearchAngle, log: Callable[[str], None] = _log.info,
 ) -> tuple[Candidate | None, Candidate | None]:
     """Resolve one search angle into a verified candidate."""
     tools = WebTools(log=log)

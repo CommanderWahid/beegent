@@ -1,11 +1,14 @@
 """What beegent needs from an LLM backend - nothing more."""
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from typing import Callable
 
 from beegent import config
 from beegent.schemas import TokenUsage
+
+_log = logging.getLogger(__name__)
 
 
 class LLMConnector(ABC):
@@ -54,7 +57,7 @@ class OpenAICompatConnector(LLMConnector):
     supports_response_format: bool = False
 
     def __init__(self, base_url: str, api_key: str,
-                 log: Callable[[str], None] = print) -> None:
+                 log: Callable[[str], None] = _log.info) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.log = log

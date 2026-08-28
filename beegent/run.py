@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import logging
 import os
+import sys
 import time
 
 from beegent import config
@@ -17,6 +19,8 @@ from beegent.pipeline import (
 )
 from beegent.schemas import Candidate, DiscoveryRun, TokenUsage
 from beegent.web_tools import normalize_url
+
+_log = logging.getLogger(__name__)
 
 
 def _rank(candidates: list[Candidate]) -> list[Candidate]:
@@ -67,32 +71,32 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
     reset_usage()
 
     # Deterministic and query-independent, so run once and seed every planner attempt.
-    print("[catalog] querying catalogs")
+    _log.info("[catalog] querying catalogs")
     catalog_hits = query_catalogs(country, use_case)
 
     feedback: str | None = None
     carried: list[Candidate] = []  # survivors from earlier iterations
     for iteration in range(1, config.MAX_ITERATIONS + 1):
         run.iteration = iteration
-        print(f"\n=== iteration {iteration}/{config.MAX_ITERATIONS} ===")
+        _log.info(f"\n=== iteration {iteration}/{config.MAX_ITERATIONS} ===")
 
         angles = plan(country, use_case, feedback)
-        print(f"[plan] {len(angles)} angle(s)")
+        _log.info(f"[plan] {len(angles)} angle(s)")
         for angle in angles:
-            print(f"  - [{angle.channel_hint}] {angle.description}")
+            _log.info(f"  - [{angle.channel_hint}] {angle.description}")
 
         # Carried first, so an already-verified file wins any dedupe collision.
         if carried:
-            print(f"[carry] {len(carried)} verified from iteration {iteration - 1}")
+            _log.info(f"[carry] {len(carried)} verified from iteration {iteration - 1}")
 
         fresh: list[Candidate] = []
         misses: list[Candidate] = []
         for i, angle in enumerate(angles, 1):
-            print(f"[geofetch] angle {i}/{len(angles)}: {angle.description}")
+            _log.info(f"[geofetch] angle {i}/{len(angles)}: {angle.description}")
             try:
                 found, missed = resolve_angle(angle)
             except Exception as exc:  # one bad angle must not kill the run
-                print(f"    [geofetch] failed: {exc}")
+                _log.info(f"    [geofetch] failed: {exc}")
                 found = missed = None
             if found:
                 fresh.append(found)
@@ -117,7 +121,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
             run.reason = None
             return _finalize(run)
 
-        print(f"[gate] escalating: {gate_reason}")
+        _log.info(f"[gate] escalating: {gate_reason}")
         if iteration >= config.MAX_ITERATIONS:
             # Hard cap is not optional - stop regardless of what the critic would say.
             run.status = "needs_human_review"
@@ -130,7 +134,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         verdict = run_critic(
             country, use_case, angles, run.candidates, run.unresolved, gate_reason
         )
-        print(f"[critic] {verdict['decision']}: {verdict['note']}")
+        _log.info(f"[critic] {verdict['decision']}: {verdict['note']}")
         if verdict["decision"] == "replan":
             feedback = verdict["note"]
             continue
@@ -143,6 +147,8 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
     parser = argparse.ArgumentParser(description="Discovery phase POC")
     parser.add_argument("--country", required=True)
     parser.add_argument("--use-case", required=True, dest="use_case")
@@ -174,8 +180,8 @@ def main() -> None:
 
     started = time.time()
     # repr()'d because it is free text: `use-case=''` reads unambiguously.
-    print(f"[input]  country={args.country}  use-case={args.use_case!r}")
-    print(
+    _log.info(f"[input]  country={args.country}  use-case={args.use_case!r}")
+    _log.info(
         f"[config] backend={connector.provider}  "
         + "  ".join(f"{r}={connector.model_for(r)}" for r in connector.ROLES)
     )
@@ -184,31 +190,31 @@ def main() -> None:
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(run.to_dict(), fh, indent=2, ensure_ascii=False)
 
-    print(f"\n--- summary ({time.time() - started:.0f}s) ---")
-    print(f"status:     {run.status}")
-    print(f"iterations: {run.iteration}/{run.max_iterations}")
-    print(f"candidates: {len(run.candidates)}")
+    _log.info(f"\n--- summary ({time.time() - started:.0f}s) ---")
+    _log.info(f"status:     {run.status}")
+    _log.info(f"iterations: {run.iteration}/{run.max_iterations}")
+    _log.info(f"candidates: {len(run.candidates)}")
     verified = sum(1 for c in run.candidates if c.verification)
-    print(f"verified:   {verified}/{len(run.candidates)} independently probed")
+    _log.info(f"verified:   {verified}/{len(run.candidates)} independently probed")
     if run.unresolved:
-        print(f"unresolved: {len(run.unresolved)} angle(s) found no verifiable download")
+        _log.info(f"unresolved: {len(run.unresolved)} angle(s) found no verifiable download")
         for cand in run.unresolved:
             why = str(cand.claim.get("failure_reason", ""))[:80]
-            print(f"            {cand.url} - {why}")
+            _log.info(f"            {cand.url} - {why}")
     if run.candidates:
         top = run.candidates[0]
-        print(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
-        print(f"            resource: {top.resource_url or 'none identified'}")
+        _log.info(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
+        _log.info(f"            resource: {top.resource_url or 'none identified'}")
         if top.verification:
-            print(
+            _log.info(
                 f"            probed:   HTTP {top.verification.get('status')} "
                 f"{top.verification.get('payload_type')} "
                 f"({top.verification.get('first_bytes_hex')})"
             )
     if run.reason:
-        print(f"reason:     {run.reason}")
+        _log.info(f"reason:     {run.reason}")
     t = run.totals
-    print(
+    _log.info(
         f"cost:       {t['angles_run']} angle(s), {t['http_requests']} request(s), "
         f"{t['total_tokens']:,} tokens "
         f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
@@ -221,8 +227,8 @@ def main() -> None:
             for role, b in sorted(by_role.items(),
                                   key=lambda kv: kv[1]["total_tokens"], reverse=True)
         )
-        print(f"            {parts}")
-    print(f"written to: {args.out}")
+        _log.info(f"            {parts}")
+    _log.info(f"written to: {args.out}")
 
 
 if __name__ == "__main__":

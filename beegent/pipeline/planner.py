@@ -1,8 +1,12 @@
 """Planner: turns a use case into 1..n distinct search angles."""
 
+import logging
+
 from beegent import config
 from beegent.llm import chat_json
 from beegent.schemas import SearchAngle
+
+_log = logging.getLogger(__name__)
 
 SYSTEM = """You plan how to find geospatial datasets on the internet.
 
@@ -93,7 +97,7 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
         url = str(raw.get("url") or "").strip()
         if not url.startswith("http"):
             # No start URL means no fetch task, so drop it rather than half-build it.
-            print(f"  [plan] dropping angle with no usable url: {raw['description'][:60]}")
+            _log.info(f"  [plan] dropping angle with no usable url: {raw['description'][:60]}")
             continue
         angles.append(
             SearchAngle(

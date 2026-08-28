@@ -1,9 +1,12 @@
 """Ollama - the default."""
 
+import logging
 import os
 from typing import Callable
 
 from beegent.connectors.base import OpenAICompatConnector
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 
@@ -20,7 +23,7 @@ class OllamaConnector(OpenAICompatConnector):
         "critic": "deepseek-r1:14b",
     }
 
-    def __init__(self, log: Callable[[str], None] = print) -> None:
+    def __init__(self, log: Callable[[str], None] = _log.info) -> None:
         super().__init__(
             base_url=os.environ.get("OLLAMA_BASE_URL", DEFAULT_BASE_URL),
             api_key="ollama",  # placeholder - Ollama ignores it entirely

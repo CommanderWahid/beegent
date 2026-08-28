@@ -251,9 +251,11 @@ class TestCliOverrides(unittest.TestCase):
 
     BASE = ["--country", "X", "--use-case", "Y", "--out", "/dev/null"]
 
+    def setUp(self):
+        """main() configures ROOT logging, which would leak into every later test."""
+        self.enterContext(mock.patch("logging.basicConfig"))
+
     def _banner(self, argv, env=None):
-        import contextlib
-        import io
         import sys
 
         from beegent import run as runmod
@@ -266,10 +268,10 @@ class TestCliOverrides(unittest.TestCase):
         with mock.patch.dict(os.environ, {**clean, **(env or {})}), \
              mock.patch.object(sys, "argv", ["run.py"] + self.BASE + argv), \
              mock.patch.object(runmod, "discover", lambda c, u: stub):
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
+            with self.assertLogs("beegent.run", level="INFO") as cm:
                 runmod.main()
-        return next(l for l in buf.getvalue().splitlines() if l.startswith("[config]"))
+        return next(r.getMessage() for r in cm.records
+                    if r.getMessage().startswith("[config]"))
 
     def test_cli_beats_environment(self):
         line = self._banner(["--geofetch-model", "from-cli"], {"GEOFETCH_MODEL": "from-env"})

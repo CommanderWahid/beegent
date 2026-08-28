@@ -1,9 +1,12 @@
 """Databricks Model Serving / Unity AI Gateway - the worked example of adding a backend."""
 
+import logging
 import os
 from typing import Callable
 
 from beegent.connectors.base import OpenAICompatConnector
+
+_log = logging.getLogger(__name__)
 
 
 def serving_base_url(host: str) -> str:
@@ -25,7 +28,7 @@ class DatabricksConnector(OpenAICompatConnector):
         "critic": "databricks-claude-opus-5",  # rare calls, highest stakes
     }
 
-    def __init__(self, log: Callable[[str], None] = print) -> None:
+    def __init__(self, log: Callable[[str], None] = _log.info) -> None:
         self.host = os.environ.get("DATABRICKS_HOST", "")
         self.token = os.environ.get("DATABRICKS_TOKEN", "")
         # TODO: PAT for now; move to OAuth machine-to-machine before production.
