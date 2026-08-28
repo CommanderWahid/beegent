@@ -265,7 +265,8 @@ class TestResolveAngle(unittest.TestCase):
         self.assertEqual(found.verification["first_bytes_hex"][:8], "50415231")  # PAR1
         self.assertEqual(found.source, "geofetch")
         self.assertEqual(found.confidence, config.CONFIDENCE_BY_REPORT["high"])
-        self.assertEqual(found.title, ANGLE.url)  # the cited page, not the edition
+        self.assertEqual(found.title, ANGLE.description)  # a label, not the edition
+        self.assertNotEqual(found.title, found.url, "title used to duplicate url")
 
     def test_claim_carries_the_models_own_account_structurally(self):
         found, _ = run_stage(list(HAPPY_PATH))
@@ -326,6 +327,7 @@ class TestResolveAngle(unittest.TestCase):
         self.assertIsNone(missed.confidence)
         self.assertIsNone(missed.verification)  # nothing to verify on a miss
         self.assertIn("no GeoParquet distribution", missed.claim["failure_reason"])
+        self.assertEqual(missed.title, ANGLE.description)  # dead ends get a label too
         # a dead end that burned the budget is exactly what cost is for
         self.assertGreater(missed.cost["steps_used"], 0)
         self.assertIn("total_tokens", missed.cost)

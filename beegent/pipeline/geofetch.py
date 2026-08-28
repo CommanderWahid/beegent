@@ -506,7 +506,7 @@ def resolve_angle(
         claim.setdefault("failure_reason", "no verifiable download found")
         return None, Candidate(
             url=start_url,
-            title=angle.url,
+            title=angle.description or angle.url,
             source="geofetch",
             confidence=None,
             resource_url=None,
@@ -517,7 +517,7 @@ def resolve_angle(
     return (
         Candidate(
             url=start_url,  # the page we cite; resource_url is the endpoint that serves data
-            title=angle.url,  # what we cite; the edition lives in claim.edition
+            title=angle.description or angle.url,  # the edition lives in claim.edition
             source="geofetch",
             confidence=config.CONFIDENCE_BY_REPORT.get(
                 str(report.get("confidence", "")).lower(), config.CONFIDENCE_DEFAULT
