@@ -86,4 +86,3 @@ throttled degrades to a dead-end record carrying its cost, rather than disappear
 ## Where to go next
 
 - [The geofetch agent](geofetch.md) — the stage that does the work
-- [Design notes](design-notes.md) — why the gate has one condition, why the catalog stage is a stub

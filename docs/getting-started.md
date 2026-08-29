@@ -7,7 +7,7 @@
 - An LLM backend. The default is [Ollama](https://ollama.com) running locally, which needs no
   account and no API key.
 
-Web search needs no key either — Beegent scrapes a DuckDuckGo → Bing fallback chain.
+Web search needs no key either — Beegent scrapes a DuckDuckGo → DDG-lite → Bing fallback chain.
 
 ## Install
 
@@ -35,12 +35,6 @@ the *oldest* messages — which are the system prompt and the task — so the ag
 uv run python -m beegent.run \
   --country France \
   --use-case "building footprints as a geoparquet file"
-```
-
-Or, after `uv sync`, via the installed command:
-
-```bash
-uv run python -m beegent.run --country France --use-case "building footprints as a geoparquet file"
 ```
 
 A run takes a few minutes on local models. It prints progress as it goes and writes
@@ -87,5 +81,4 @@ to a file, and it needs native function calling. See [Backends](backends.md).
 ## Next steps
 
 - [Configuration](configuration.md) — the settings that control cost and depth
-- [Troubleshooting](troubleshooting.md) — if a run finds nothing
 - [Performance](performance.md) — what a run costs before you point it at a paid endpoint

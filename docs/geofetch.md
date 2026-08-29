@@ -90,7 +90,7 @@ deterministic code before accepting it:
 A rejected report is handed back to the model, which must keep searching. **A fabricated URL cannot
 reach the output; the worst case is an honest failure** recorded under `unresolved`.
 
-Checks 3 and 4 look redundant and are not — see [Design notes](design-notes.md).
+Checks 3 and 4 look redundant and are not.
 
 ## When the agent gets stuck
 
@@ -105,4 +105,3 @@ Checks 3 and 4 look redundant and are not — see [Design notes](design-notes.md
 
 - [Configuration](configuration.md) — the step, request and truncation limits
 - [Performance](performance.md) — what each limit costs
-- [Design notes](design-notes.md) — why the guardrails are shaped this way

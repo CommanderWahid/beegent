@@ -12,9 +12,10 @@ Every stage asks for a *role*: `planner`, `geofetch`, `critic`.
 
 ```bash
 uv run python -m beegent.run --country France --use-case "..." \
-  --backend databricks \
-  --planner-model databricks-claude-sonnet-4-6 \
-  --geofetch-model databricks-claude-haiku-4-5
+  --backend ollama \
+  --planner-model deepseek-r1:14b \
+  --geofetch-model qwen3:8b \
+  --critic-model deepseek-r1:14b
 ```
 
 **Precedence, highest wins:**
@@ -40,6 +41,17 @@ what was actually used, so you never have to reconstruct it.
 | `--planner-model` | connector default | Model for the planner |
 | `--geofetch-model` | connector default | Model for the fetch agent |
 | `--critic-model` | connector default | Model for the critic |
+
+## Environment variable options
+
+An alternative to the flags above, and **lower precedence** — a CLI flag always wins over an
+environment variable. Set them dynamically for one run (`GEOFETCH_MODEL=qwen3:8b uv run ...`) or
+put them in `.env` (see `.env.example`); real environment variables win over `.env`.
+
+| Variable | Purpose |
+|---|---|
+| `LLM_BACKEND` | Which connector to use, if `--backend` is not given |
+| `PLANNER_MODEL`, `GEOFETCH_MODEL`, `CRITIC_MODEL` | Per-role model override |
 
 ## Pipeline settings
 
@@ -96,14 +108,3 @@ Watch `LLM_TIMEOUT` and `LLM_MAX_RETRIES` together: the worst case for a single 
 |---|---|---|
 | `CONFIDENCE_BY_REPORT` | `{high: 0.95, medium: 0.8, low: 0.7}` | Maps the model's self-assessment |
 | `CONFIDENCE_DEFAULT` | `0.7` | Used when the self-assessment is unrecognised |
-
-## Environment variables
-
-| Variable | Purpose |
-|---|---|
-| `LLM_BACKEND` | Which connector to use, if `--backend` is not given |
-| `PLANNER_MODEL`, `GEOFETCH_MODEL`, `CRITIC_MODEL` | Per-role model override |
-| `OLLAMA_BASE_URL` | Ollama endpoint, default `http://localhost:11434/v1` |
-| `DATABRICKS_HOST`, `DATABRICKS_TOKEN` | Databricks credentials |
-
-Put them in `.env` (see `.env.example`). Real environment variables win over `.env`.

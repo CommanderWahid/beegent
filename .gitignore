@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 candidate_list.json
 .env
+docs/design-notes.md
+docs/token_trace.md

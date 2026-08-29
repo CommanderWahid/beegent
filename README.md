@@ -130,8 +130,6 @@ Pre-1.0: interfaces may change.
 | [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the five guardrails |
 | [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
 | [Performance](docs/performance.md) | What a run costs and which settings move it |
-| [Troubleshooting](docs/troubleshooting.md) | Symptoms, causes, fixes |
-| [Design notes](docs/design-notes.md) | Why it is built this way |
 
 ## Development
 
