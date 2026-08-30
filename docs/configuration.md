@@ -52,10 +52,17 @@ put them in `.env` (see `.env.example`); real environment variables win over `.e
 |---|---|
 | `LLM_BACKEND` | Which connector to use, if `--backend` is not given |
 | `PLANNER_MODEL`, `GEOFETCH_MODEL`, `CRITIC_MODEL` | Per-role model override |
+| Any integer setting in `beegent/config.py` | Overrides that pipeline tunable — see below |
 
 ## Pipeline settings
 
-All in `beegent/config.py`.
+All in `beegent/config.py`. **Every integer setting below is overridable by an environment
+variable of the same name**, with the same precedence as the model variables — so
+`MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value that is
+not a positive integer fails at startup rather than silently falling back.
+
+Three settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
+GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`.
 
 ### Breadth and depth
 
