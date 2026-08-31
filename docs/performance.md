@@ -85,7 +85,7 @@ cost:  5 angle(s), 28 request(s), 177,629 tokens (139,161 in / 38,468 out)
        geofetch 172,771  |  planner 3,884  |  critic 974
 ```
 
-`run.totals["by_role"]` gives this split on every run. Two things it reveals:
+`run.totals["by_role"]` gives this split on every run. Three things it reveals:
 
 - **The planner and critic are cheap in tokens but not in output.** A planner call is 893 in /
   1,049 out; a critic call 399 in / 505 out. Both are *output*-heavy, the inverse of geofetch,
@@ -93,6 +93,12 @@ cost:  5 angle(s), 28 request(s), 177,629 tokens (139,161 in / 38,468 out)
   endpoints.
 - **A dead angle can cost as much as a successful one.** Dead ends carry their own `cost` block
   precisely so this is visible.
+- **`cached_tokens` says how much of the input you were not charged full price for.** It rides on
+  the same buckets, and the summary adds a line when it is non-zero:
+
+  ```
+  cached:     1,024 of the input tokens (10%)
+  ```
 
 ## Deliberately not done
 
