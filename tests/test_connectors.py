@@ -95,6 +95,62 @@ class TestTokenUsageExtractionIsAConnectorConcern(unittest.TestCase):
         self.assertEqual((usage.prompt_tokens, usage.completion_tokens), (70, 30))
 
 
+class TestCachedTokens(unittest.TestCase):
+    """Cached prompt prefixes are free against a TPM budget, so a run must be able to see them."""
+
+    class _Cached(OpenAICompatConnector):
+        provider = "cached"
+        DEFAULT_MODELS = {"planner": "m", "geofetch": "m", "critic": "m"}
+        details = None
+
+        def __init__(self):
+            super().__init__("http://x", "k", log=lambda m: None)
+
+        def validate(self):
+            return None
+
+        def _create(self, model, messages, **kw):
+            return mock.Mock(
+                choices=[mock.Mock(message=mock.Mock(content='{"a": 1}'))],
+                usage=mock.Mock(prompt_tokens=1_000, completion_tokens=40,
+                                prompt_tokens_details=self.details),
+            )
+
+    def test_cached_tokens_are_read_from_the_nested_field(self):
+        c = self._Cached()
+        c.details = mock.Mock(cached_tokens=768)
+        for call in (lambda: c.chat_json("m", []), lambda: c.chat_tools("m", [], [])):
+            with self.subTest(call=call):
+                _, usage = call()
+                self.assertEqual(usage.cached_tokens, 768)
+
+    def test_a_backend_that_does_not_report_them_reads_zero(self):
+        _, usage = self._Cached().chat_json("m", [])  # details stays None
+        self.assertEqual(usage.cached_tokens, 0)
+
+    def test_a_dict_shaped_usage_payload_is_read_too(self):
+        """Only the serialization differs; a silent 0 here would be indistinguishable from none."""
+        c = self._Cached()
+        c.details = {"cached_tokens": 512}
+        _, usage = c.chat_json("m", [])
+        self.assertEqual(usage.cached_tokens, 512)
+
+    def test_cached_is_a_subset_of_prompt_not_an_addition(self):
+        """Double-counting it would inflate every total the run reports."""
+        c = self._Cached()
+        c.details = mock.Mock(cached_tokens=900)
+        _, usage = c.chat_json("m", [])
+        self.assertEqual(usage.prompt_tokens, 1_000)
+        self.assertEqual(usage.total_tokens, 1_040, "cached is already inside prompt_tokens")
+
+    def test_add_accumulates_cached_across_calls(self):
+        total = TokenUsage()
+        total.add(TokenUsage(prompt_tokens=100, completion_tokens=10, cached_tokens=60))
+        total.add(TokenUsage(prompt_tokens=100, completion_tokens=10, cached_tokens=80))
+        self.assertEqual(total.cached_tokens, 140)
+        self.assertEqual(total.total_tokens, 220)
+
+
 class TestBackendQuirksAreOwnedLocally(unittest.TestCase):
     """Each quirk used to be an `if config.LLM_BACKEND == ...` in shared code."""
 
@@ -303,9 +359,9 @@ class TestCliOverrides(unittest.TestCase):
         from beegent import run as runmod
         from beegent.schemas import DiscoveryRun
 
+        # Derived, so a new cost key cannot break this test by omission.
         stub = DiscoveryRun(country="X", use_case="Y", totals=dict.fromkeys(
-            ("angles_run", "http_requests", "prompt_tokens", "completion_tokens",
-             "total_tokens"), 0))
+            ("angles_run",) + runmod._COST_KEYS, 0) | {"by_role": {}})
         clean = {k: "" for k in ("GEOFETCH_MODEL", "PLANNER_MODEL", "CRITIC_MODEL")}
         with mock.patch.dict(os.environ, {**clean, **(env or {})}), \
              mock.patch.object(sys, "argv", ["run.py"] + self.BASE + argv), \
@@ -379,7 +435,9 @@ class TestChatJsonChargesEveryAttempt(unittest.TestCase):
             self.calls += 1
             return mock.Mock(
                 choices=[mock.Mock(message=mock.Mock(content=content))],
-                usage=mock.Mock(prompt_tokens=prompt, completion_tokens=completion),
+                # None, not a bare Mock: a Mock fabricates every attribute asked of it.
+                usage=mock.Mock(prompt_tokens=prompt, completion_tokens=completion,
+                                prompt_tokens_details=None),
             )
 
     def test_retry_sums_both_attempts(self):

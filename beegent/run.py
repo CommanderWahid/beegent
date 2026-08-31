@@ -32,15 +32,15 @@ def _rank(candidates: list[Candidate]) -> list[Candidate]:
     return ranked[: config.MAX_FINAL_CANDIDATES]
 
 
-_COST_KEYS = ("http_requests", "prompt_tokens", "completion_tokens", "total_tokens")
-_TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
+# cached_tokens is a subset of prompt_tokens, reported so a run shows its own cache hit rate.
+_TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+_COST_KEYS = ("http_requests",) + _TOKEN_KEYS
 
 
 def _add_tokens(dst: dict, usage: TokenUsage) -> None:
-    """Add one usage record into any dict carrying the three token keys."""
-    dst["prompt_tokens"] += usage.prompt_tokens
-    dst["completion_tokens"] += usage.completion_tokens
-    dst["total_tokens"] += usage.total_tokens
+    """Add one usage record into any dict carrying the token keys."""
+    for key in _TOKEN_KEYS:
+        dst[key] += getattr(usage, key)
 
 
 def _add_role(totals: dict, role: str, usage: TokenUsage) -> None:
@@ -109,7 +109,8 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 run.totals["http_requests"] += cost.get("http_requests", 0)
                 _add_role(run.totals, "geofetch",
                           TokenUsage(prompt_tokens=cost.get("prompt_tokens", 0),
-                                     completion_tokens=cost.get("completion_tokens", 0)))
+                                     completion_tokens=cost.get("completion_tokens", 0),
+                                     cached_tokens=cost.get("cached_tokens", 0)))
 
         run.candidates = _rank(carried + list(catalog_hits) + fresh)
         run.unresolved = misses
@@ -220,6 +221,9 @@ def main() -> None:
         f"{t['total_tokens']:,} tokens "
         f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
     )
+    if t["cached_tokens"]:  # silent on a backend that reports no cache hits at all
+        share = 100 * t["cached_tokens"] / (t["prompt_tokens"] or 1)
+        _log.info(f"cached:     {t['cached_tokens']:,} of the input tokens ({share:.0f}%)")
     # Where the tokens went, biggest spender first.
     by_role = t.get("by_role") or {}
     if by_role:

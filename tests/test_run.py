@@ -118,6 +118,33 @@ class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
         self.assertNotIn("critic", t["by_role"], "the gate passed, so no critic call")
         self.assertEqual(t["total_tokens"], 7_000, "run-wide total = sum of the buckets")
 
+    def test_cached_tokens_reach_totals_from_both_metering_routes(self):
+        """chat_json meters per role, chat_tools rides on Candidate.cost - both must carry it."""
+        from beegent import run as runmod
+
+        self._install()
+        cached = Candidate(
+            url="https://ok.example/p", title="T", source="geofetch", confidence=0.95,
+            resource_url="https://ok.example/f.parquet",
+            cost={"http_requests": 4, "prompt_tokens": 5_000, "completion_tokens": 1_000,
+                  "total_tokens": 6_000, "cached_tokens": 4_200})
+        with mock.patch.object(runmod, "resolve_angle", lambda a: (cached, None)):
+            run = runmod.discover("Atlantis", "land cover")
+
+        t = run.to_dict()["totals"]
+        self.assertEqual(t["by_role"]["geofetch"]["cached_tokens"], 4_200)
+        self.assertEqual(t["cached_tokens"], 4_200, "the planner reported none of its own")
+        self.assertEqual(t["total_tokens"], 7_000, "cached must not inflate the run total")
+
+    def test_a_backend_reporting_no_cache_leaves_the_key_at_zero(self):
+        """The key is always present, so a run can be read without knowing the backend."""
+        from beegent import run as runmod
+
+        self._install()
+        with mock.patch.object(runmod, "resolve_angle", lambda a: self._verified()):
+            run = runmod.discover("Atlantis", "land cover")
+        self.assertEqual(run.to_dict()["totals"]["cached_tokens"], 0)
+
     def test_critic_bucket_is_counted_when_the_gate_fires(self):
         from beegent import run as runmod
 

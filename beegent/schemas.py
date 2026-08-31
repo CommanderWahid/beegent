@@ -9,15 +9,17 @@ class TokenUsage:
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cached_tokens: int = 0  # a SUBSET of prompt_tokens - a prefix the backend served from cache
 
     @property
     def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
+        return self.prompt_tokens + self.completion_tokens  # cached is inside prompt, never added
 
     def add(self, other: "TokenUsage | None") -> None:
         if other:
             self.prompt_tokens += other.prompt_tokens
             self.completion_tokens += other.completion_tokens
+            self.cached_tokens += other.cached_tokens
 
 
 @dataclass

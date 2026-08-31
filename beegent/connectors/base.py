@@ -82,9 +82,14 @@ class OpenAICompatConnector(LLMConnector):
 
     def _token_usage(self, raw) -> TokenUsage:
         """Map ONE response's raw usage payload to TokenUsage."""
+        # Cache hits are nested one level down; a backend not reporting them leaves this 0.
+        details = getattr(raw, "prompt_tokens_details", None)
+        cached = (details.get("cached_tokens") if isinstance(details, dict)
+                  else getattr(details, "cached_tokens", 0))
         return TokenUsage(
             prompt_tokens=getattr(raw, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(raw, "completion_tokens", 0) or 0,
+            cached_tokens=cached or 0,
         )
 
     def chat_json(self, model: str, messages: list[dict]) -> tuple:

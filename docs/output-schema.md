@@ -50,7 +50,8 @@ A run writes `candidate_list.json` (change the path with `--out`).
 
   "cost": {
     "steps_used": 14, "http_requests": 22,
-    "prompt_tokens": 182340, "completion_tokens": 4120, "total_tokens": 186460
+    "prompt_tokens": 182340, "completion_tokens": 4120, "total_tokens": 186460,
+    "cached_tokens": 31280
   }
 }
 ```
@@ -125,13 +126,24 @@ Dead ends carry their `cost`, so a route that burned the whole budget is visible
 "totals": {
   "angles_run": 5, "http_requests": 28,
   "prompt_tokens": 139161, "completion_tokens": 38468, "total_tokens": 177629,
+  "cached_tokens": 24310,
   "by_role": {
-    "geofetch": {"prompt_tokens": 136851, "completion_tokens": 35920, "total_tokens": 172771},
-    "planner":  {"prompt_tokens": 1840,   "completion_tokens": 2044,  "total_tokens": 3884},
-    "critic":   {"prompt_tokens": 470,    "completion_tokens": 504,   "total_tokens": 974}
+    "geofetch": {"prompt_tokens": 136851, "completion_tokens": 35920,
+                 "total_tokens": 172771, "cached_tokens": 24310},
+    "planner":  {"prompt_tokens": 1840, "completion_tokens": 2044,
+                 "total_tokens": 3884, "cached_tokens": 0},
+    "critic":   {"prompt_tokens": 470, "completion_tokens": 504,
+                 "total_tokens": 974, "cached_tokens": 0}
   }
 }
 ```
 
 The run-wide token counts are the sum of the `by_role` buckets. See
 [Performance](performance.md) for what to do with these numbers.
+
+`cached_tokens` is a **subset of `prompt_tokens`**, not an addition to it — it is the part of the
+input a backend served from its own prompt cache, so it is never included in `total_tokens`. Read it
+as a ratio against `prompt_tokens`: on a backend that caches, a high ratio means most of each
+request cost nothing, which matters most where a rate limit is measured in tokens per minute. A
+backend that does not report cache hits leaves it at `0`, which is indistinguishable from a genuine
+zero — the key is always present so the file can be read without knowing which backend ran.

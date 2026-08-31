@@ -509,6 +509,7 @@ def _cost(result: AgentResult, tools: WebTools) -> dict:
         "prompt_tokens": result.usage.prompt_tokens,
         "completion_tokens": result.usage.completion_tokens,
         "total_tokens": result.usage.total_tokens,
+        "cached_tokens": result.usage.cached_tokens,
     }
 
 
