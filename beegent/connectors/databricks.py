@@ -22,9 +22,8 @@ class DatabricksConnector(OpenAICompatConnector):
 
     # Serving-endpoint names, NOT bare model names - a 404 means it is not named this.
     DEFAULT_MODELS = {
-        "planner": "databricks-claude-sonnet-4-6",
-        "geofetch": "databricks-claude-haiku-4-5",  # the expensive loop: needs native
-        # function calling, and runs GEOFETCH_MAX_STEPS times per angle
+        "planner": "databricks-claude-sonnet-5",
+        "geofetch": "databricks-claude-sonnet-4-6",
         "critic": "databricks-claude-opus-5",  # rare calls, highest stakes
     }
 

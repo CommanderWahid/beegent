@@ -253,13 +253,13 @@ class TestValidate(unittest.TestCase):
 
     def test_mistral_names_a_role_model_the_endpoint_does_not_list(self):
         """Catches a typo or a retired id - NOT entitlement, which /v1/models does not report."""
-        served = mock.Mock(**{"json.return_value": {"data": [{"id": "mistral-small-latest"}]}})
+        served = mock.Mock(**{"json.return_value": {"data": [{"id": "mistral-tiny-latest"}]}})
         with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "k"}), \
              mock.patch("requests.get", return_value=served):
             problem = MistralConnector(log=lambda m: None).validate()
         for model in set(MistralConnector.DEFAULT_MODELS.values()):
             self.assertIn(model, problem)  # derived, so retuning a default cannot break this
-        self.assertIn("mistral-small-latest", problem, "and what it could use instead")
+        self.assertIn("mistral-tiny-latest", problem, "and what it could use instead")
 
     def test_mistral_validates_the_override_not_the_default(self):
         every = [{"id": m} for m in set(MistralConnector.DEFAULT_MODELS.values())]

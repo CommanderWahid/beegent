@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Callable
 
-from beegent.connectors.base import OpenAICompatConnector
+from beegent.connectors.base import LLMConnector, OpenAICompatConnector
 
 _log = logging.getLogger(__name__)
 
@@ -16,14 +16,8 @@ class MistralConnector(OpenAICompatConnector):
     provider = "mistral"
     supports_response_format = True  # json_object; the planner/critic prompts already say JSON
 
-    # Magistral is the reasoning tier and takes the two one-shot, output-heavy roles;
-    # geofetch runs GEOFETCH_MAX_STEPS times per angle and needs the best tool caller.
-    # Medium not large: large is 403 tier_not_allowed on a free key, medium is not.
-    DEFAULT_MODELS = {
-        "planner": "magistral-medium-latest",
-        "geofetch": "mistral-medium-latest",
-        "critic": "magistral-medium-latest",
-    }
+    # One model for all three roles
+    DEFAULT_MODELS = dict.fromkeys(LLMConnector.ROLES, "mistral-small-latest")
 
     def __init__(self, log: Callable[[str], None] = _log.info) -> None:
         super().__init__(
@@ -34,7 +28,7 @@ class MistralConnector(OpenAICompatConnector):
 
     # No _create() override: Mistral accepts temperature and response_format as sent.
     # No _token_usage() override: it spells usage prompt_tokens/completion_tokens already.
-    # Magistral's <think> blocks are handled by llm.strip_think(), which needs no change.
+    # Mistral's <think> blocks are handled by llm.strip_think(), which needs no change.
 
     def validate(self) -> str | None:
         """Key, reachability, and that each role's model is still served."""

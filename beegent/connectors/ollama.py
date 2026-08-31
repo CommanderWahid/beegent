@@ -18,7 +18,6 @@ class OllamaConnector(OpenAICompatConnector):
     # Sized for a local box (RTX 4070 Laptop, 8GB).
     DEFAULT_MODELS = {
         "planner": "deepseek-r1:14b",
-        # qwen3:8b has the most reliable tool calling here; do NOT "upgrade" to 14b.
         "geofetch": "qwen3:8b",
         "critic": "deepseek-r1:14b",
     }

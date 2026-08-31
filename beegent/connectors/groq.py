@@ -16,8 +16,7 @@ class GroqConnector(OpenAICompatConnector):
     provider = "groq"
     supports_response_format = True  # json_object; the planner/critic prompts already say JSON
 
-    # One model for all three roles: Groq's production chat tier is two models wide, and
-    # gpt-oss-20b is a cheaper GEOFETCH_MODEL override rather than a default worth shipping.
+    # One model for all three roles
     DEFAULT_MODELS = dict.fromkeys(LLMConnector.ROLES, "openai/gpt-oss-120b")
 
     def __init__(self, log: Callable[[str], None] = _log.info) -> None:
