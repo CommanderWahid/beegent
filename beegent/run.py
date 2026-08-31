@@ -20,7 +20,7 @@ from beegent.pipeline import (
 from beegent.schemas import Candidate, DiscoveryRun, TokenUsage
 from beegent.web_tools import normalize_url
 
-_log = logging.getLogger(__name__)
+_log = logging.getLogger("beegent.run")
 
 
 def _rank(candidates: list[Candidate]) -> list[Candidate]:

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """run.py's ranking and the discover() loop."""
 
+import os
 import unittest
 from unittest import mock
 
@@ -10,6 +11,46 @@ from beegent.run import _rank
 from beegent.schemas import Candidate, SearchAngle, TokenUsage
 
 from tests.fixtures import FILE_URL, _cand
+
+
+class TestCliLoggingReachesTheTerminal(unittest.TestCase):
+    """run.py is the one module that is ALSO an entry point, so __name__ is a trap there."""
+
+    # A subprocess, because the bug only exists when run.py IS "__main__"; importing it
+    # (as every other test does) binds the correct logger name and hides the fault.
+    SCRIPT = """
+import runpy, sys
+from beegent.connectors import CONNECTORS, LLMConnector
+from beegent.schemas import TokenUsage
+
+class Fake(LLMConnector):
+    provider = "fake"
+    DEFAULT_MODELS = {"planner": "p", "geofetch": "g", "critic": "c"}
+    def chat_json(self, model, messages):
+        if model == "p":
+            return {"angles": []}, TokenUsage(1, 1)          # no angles, so no geofetch
+        return {"decision": "needs_human_review", "note": "n"}, TokenUsage(1, 1)
+    def chat_tools(self, model, messages, tools):
+        raise AssertionError("no angles, so this must never be reached")
+    def validate(self):
+        return None                                           # so main() gets past the gate
+
+CONNECTORS["fake"] = Fake
+sys.argv = ["run.py", "--country", "X", "--use-case", "Y", "--backend", "fake", "--out", %r]
+runpy.run_module("beegent.run", run_name="__main__")
+"""
+
+    def test_run_py_logs_when_executed_as_main(self):
+        """Under `python -m`, __name__ is "__main__" - outside the "beegent" logger hierarchy."""
+        import subprocess
+        import sys
+
+        proc = subprocess.run([sys.executable, "-c", self.SCRIPT % os.devnull],
+                              capture_output=True, text=True, timeout=60)
+        out = proc.stdout + proc.stderr
+        self.assertIn("[input]", out, "run.py's own logging must reach the terminal")
+        self.assertIn("[config]", out)
+        self.assertIn("--- summary", out, "including the summary block")
 
 
 class TestRank(unittest.TestCase):
