@@ -10,6 +10,7 @@ from beegent.connectors import (
     DatabricksConnector,
     GroqConnector,
     LLMConnector,
+    MistralConnector,
     OllamaConnector,
     OpenAICompatConnector,
     create_connector,
@@ -22,7 +23,7 @@ from tests.fixtures import ANGLE, HAPPY_PATH, FakeLLM, make_tools
 class TestRegistry(unittest.TestCase):
     def test_every_shipped_connector_is_registered(self):
         for name, cls in (("ollama", OllamaConnector), ("databricks", DatabricksConnector),
-                          ("groq", GroqConnector)):
+                          ("groq", GroqConnector), ("mistral", MistralConnector)):
             with self.subTest(provider=name):
                 self.assertIsInstance(create_connector(name), cls)
 
@@ -32,6 +33,7 @@ class TestRegistry(unittest.TestCase):
         self.assertIn("ollama", str(ctx.exception))
         self.assertIn("databricks", str(ctx.exception))
         self.assertIn("groq", str(ctx.exception))
+        self.assertIn("mistral", str(ctx.exception))
 
     def test_every_connector_satisfies_the_contract(self):
         for name, cls in CONNECTORS.items():
@@ -158,6 +160,7 @@ class TestBackendQuirksAreOwnedLocally(unittest.TestCase):
         # Databricks' Claude endpoints 400 on response_format; Ollama and Groq accept it.
         self.assertTrue(OllamaConnector.supports_response_format)
         self.assertTrue(GroqConnector.supports_response_format)
+        self.assertTrue(MistralConnector.supports_response_format)
         self.assertFalse(DatabricksConnector.supports_response_format)
 
     def test_databricks_retries_without_temperature(self):
@@ -235,6 +238,38 @@ class TestValidate(unittest.TestCase):
             self.assertIsNone(c.validate())
             with mock.patch.dict(os.environ, {"GEOFETCH_MODEL": "retired-model"}):
                 self.assertIn("retired-model", c.validate())
+
+    def test_mistral_reports_a_missing_key_without_a_request(self):
+        with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": ""}), \
+             mock.patch("requests.get", side_effect=AssertionError("must not be called")):
+            self.assertIn("MISTRAL_API_KEY", MistralConnector(log=lambda m: None).validate())
+
+    def test_mistral_reports_an_unreachable_endpoint_rather_than_raising(self):
+        with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "k"}), \
+             mock.patch("requests.get", side_effect=OSError("boom")):
+            problem = MistralConnector(log=lambda m: None).validate()
+        self.assertIn("OSError", problem)
+        self.assertIn("MISTRAL_API_KEY", problem)
+
+    def test_mistral_names_a_role_model_the_endpoint_does_not_list(self):
+        """Catches a typo or a retired id - NOT entitlement, which /v1/models does not report."""
+        served = mock.Mock(**{"json.return_value": {"data": [{"id": "mistral-small-latest"}]}})
+        with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "k"}), \
+             mock.patch("requests.get", return_value=served):
+            problem = MistralConnector(log=lambda m: None).validate()
+        for model in set(MistralConnector.DEFAULT_MODELS.values()):
+            self.assertIn(model, problem)  # derived, so retuning a default cannot break this
+        self.assertIn("mistral-small-latest", problem, "and what it could use instead")
+
+    def test_mistral_validates_the_override_not_the_default(self):
+        every = [{"id": m} for m in set(MistralConnector.DEFAULT_MODELS.values())]
+        served = mock.Mock(**{"json.return_value": {"data": every}})
+        with mock.patch.dict(os.environ, {"MISTRAL_API_KEY": "k"}), \
+             mock.patch("requests.get", return_value=served):
+            c = MistralConnector(log=lambda m: None)
+            self.assertIsNone(c.validate())
+            with mock.patch.dict(os.environ, {"GEOFETCH_MODEL": "not-a-model"}):
+                self.assertIn("not-a-model", c.validate())
 
     def test_host_accepts_bare_or_full_url(self):
         want = "https://x.cloud.databricks.com/serving-endpoints"
@@ -330,7 +365,7 @@ class TestExtensibility(unittest.TestCase):
         src = inspect.getsource(cfg)
         # not "llama": the default LLM_BACKEND value "ollama" contains it
         for token in ("databricks", "deepseek", "qwen3", "claude", "groq", "gpt-oss",
-                      "selfcontained"):
+                      "mistral", "magistral", "selfcontained"):
             self.assertNotIn(token, src, f"config.py should not mention {token!r}")
 
     def test_usage_is_normalized_even_when_a_backend_reports_none(self):

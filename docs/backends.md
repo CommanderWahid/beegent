@@ -1,8 +1,9 @@
 # Backends
 
-Beegent talks to LLMs through a connector. Three ship with it: **Ollama** (the default, local, no
-key), **Groq** (hosted, needs only an API key) and **Databricks** (a worked example of a hosted one
-behind a workspace). Each connector owns its own models, credentials and quirks.
+Beegent talks to LLMs through a connector. Four ship with it: **Ollama** (the default, local, no
+key), **Groq** and **Mistral** (hosted, each needing only an API key) and **Databricks** (a worked
+example of a hosted one behind a workspace). Each connector owns its own models, credentials and
+quirks.
 
 ## Ollama
 
@@ -56,6 +57,37 @@ The practical limit is tokens per minute, not price. Geofetch is input-heavy —
 rate-limit backoff. `MAX_ANGLES=1` is the lever for a first run.
 
 Set `GROQ_BASE_URL` to point at a proxy; it defaults to `https://api.groq.com/openai/v1`.
+
+## Mistral
+
+Hosted, and like Groq an API key is the whole setup.
+
+```bash
+cp .env.example .env
+# set MISTRAL_API_KEY
+
+uv run python -m beegent.run --backend mistral \
+  --country Kenya --use-case "administrative boundaries for a flood-response dashboard"
+```
+
+Defaults are `magistral-medium-latest` (planner), `mistral-medium-latest` (geofetch) and
+`magistral-medium-latest` (critic). Magistral is the reasoning tier, and it takes the two one-shot
+roles because those are output-heavy; geofetch runs up to `GEOFETCH_MAX_STEPS` times per angle and
+gets the better tool caller instead. `mistral-large-latest` is the upgrade for geofetch on a paid
+plan; `magistral-small-latest` and `mistral-small-latest` are the cheaper way down.
+
+**Medium, not large, because `mistral-large-latest` returns `403 tier_not_allowed` on a free key.**
+Measured, not assumed — and the trap is that `GET /v1/models` lists it anyway.
+
+Magistral emits `<think>…</think>` reasoning, which `llm.strip_think()` already removes before the
+message is kept — it was written for the Ollama defaults and needed no change here.
+
+`validate()` checks the key, then lists `GET /v1/models` and names any role model the endpoint does
+not list, with the ids it does. **That catches a typo or a retired id, but not entitlement** — the
+list includes models your key will be refused on, so a 403 can still arrive at the first call.
+Where Groq's equivalent check is authoritative, Mistral's is a spell-check.
+
+Set `MISTRAL_BASE_URL` to point at a proxy; it defaults to `https://api.mistral.ai/v1`.
 
 ## Databricks
 
