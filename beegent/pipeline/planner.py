@@ -89,14 +89,19 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
             "Produce new angles that follow that advice; do not repeat what clearly failed."
         )
 
-    # Usage discarded: llm.chat_json already recorded it against the role.
-    data, _ = chat_json(
-        "planner",
-        [
-            {"role": "system", "content": SYSTEM.format(max_angles=config.MAX_ANGLES)},
-            {"role": "user", "content": user},
-        ],
-    )
+    try:
+        # Usage discarded: llm.chat_json already recorded it against the role.
+        data, _ = chat_json(
+            "planner",
+            [
+                {"role": "system", "content": SYSTEM.format(max_angles=config.MAX_ANGLES)},
+                {"role": "user", "content": user},
+            ],
+        )
+    except Exception as exc:
+        # No angles is a survivable run that escalates; a traceback loses everything.
+        _log.info(f"  [plan] call failed: {type(exc).__name__}: {exc}")
+        data = None
 
     angles: list[SearchAngle] = []
     for raw in (data or {}).get("angles", [])[: config.MAX_ANGLES]:

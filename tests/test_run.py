@@ -145,6 +145,41 @@ class TestPlannerAndCriticSpendIsCounted(unittest.TestCase):
             run = runmod.discover("Atlantis", "land cover")
         self.assertEqual(run.to_dict()["totals"]["cached_tokens"], 0)
 
+    def test_a_raising_critic_call_does_not_lose_the_run(self):
+        """Every stage fails soft: a throttled critic must not discard work already paid for."""
+        from beegent import run as runmod
+
+        class Throttled(LLMConnector):
+            provider = "fake"
+            DEFAULT_MODELS = {"planner": "p", "geofetch": "g", "critic": "c"}
+            def chat_json(self, model, messages):
+                if model == "p":
+                    return TestPlannerAndCriticSpendIsCounted.PLAN, TokenUsage(800, 200)
+                raise RuntimeError("Rate limit exceeded")   # the critic call, past SDK retries
+            def chat_tools(self, model, messages, tools):
+                raise AssertionError("geofetch is mocked at resolve_angle in this test")
+            def validate(self):
+                return None
+
+        dead = Candidate(url="https://x.example/p", title="T", source="geofetch",
+                         confidence=0.7, resource_url="",
+                         claim={"failure_reason": "nothing verifiable"},
+                         cost={"http_requests": 11, "prompt_tokens": 25_000,
+                               "completion_tokens": 1_190, "total_tokens": 26_190})
+        patcher = mock.patch.object(llm, "_connector", Throttled())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(llm.reset_usage)
+        with mock.patch.object(runmod, "resolve_angle", lambda a: (None, dead)):
+            run = runmod.discover("Atlantis", "land cover")
+
+        self.assertEqual(run.status, "needs_human_review")
+        self.assertIn("RuntimeError", run.reason, "the reason must say the critic was throttled")
+        out = run.to_dict()
+        self.assertEqual(out["totals"]["by_role"]["geofetch"]["total_tokens"], 26_190,
+                         "work already paid for must survive")
+        self.assertEqual(len(out["unresolved"]), 1, "the dead end must not vanish")
+
     def test_critic_bucket_is_counted_when_the_gate_fires(self):
         from beegent import run as runmod
 

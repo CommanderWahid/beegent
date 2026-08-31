@@ -52,6 +52,11 @@ class TestAngleValidation(unittest.TestCase):
         got = run_plan([angle(dataset="")])
         self.assertEqual(got[0].dataset, "national mapping agency bulk server")
 
+    def test_a_raising_call_yields_no_angles_rather_than_propagating(self):
+        """No angles is a survivable run that escalates; a traceback loses the whole run."""
+        with mock.patch.object(planner, "chat_json", side_effect=RuntimeError("429")):
+            self.assertEqual(plan("France", "buildings"), [])
+
     def test_no_answer_yields_no_angles_rather_than_raising(self):
         """chat_json returning None means 'no answer', never a negative answer."""
         with mock.patch.object(planner, "chat_json", lambda role, messages: (None, TokenUsage())):

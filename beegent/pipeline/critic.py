@@ -1,7 +1,11 @@
 """Escalation gate (deterministic) + critic agent (one rare LLM call)."""
 
+import logging
+
 from beegent.llm import chat_json
 from beegent.schemas import Candidate, SearchAngle
+
+_log = logging.getLogger(__name__)
 
 CRITIC_SYSTEM = """You review a failed-looking dataset discovery run and decide what happens next.
 
@@ -63,25 +67,34 @@ def run_critic(
         )
         or "(none recorded)"
     )
-    # Usage discarded - see the note in planner.py:plan().
-    data, _ = chat_json(
-        "critic",
-        [
-            {"role": "system", "content": CRITIC_SYSTEM},
-            {
-                "role": "user",
-                "content": (
-                    f"Country: {country}\nUse case: {use_case}\n\n"
-                    f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
-                    f"Angles that dead-ended:\n{dead}\n\n"
-                    f"Why this was escalated: {gate_reason}"
-                ),
-            },
-        ],
-    )
+    failed = ""
+    try:
+        # Usage discarded - see the note in planner.py:plan().
+        data, _ = chat_json(
+            "critic",
+            [
+                {"role": "system", "content": CRITIC_SYSTEM},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Country: {country}\nUse case: {use_case}\n\n"
+                        f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
+                        f"Angles that dead-ended:\n{dead}\n\n"
+                        f"Why this was escalated: {gate_reason}"
+                    ),
+                },
+            ],
+        )
+    except Exception as exc:
+        # A throttled critic must not discard a run that already paid for its geofetch work.
+        failed = f"critic call failed: {type(exc).__name__}: {exc}"
+        _log.info(f"  [critic] {failed}")
+        data = None
     data = data or {}
 
     decision = data.get("decision")
     if decision not in ("replan", "needs_human_review"):
         decision = "needs_human_review"  # unparseable critic -> fail safe, hand to a human
-    return {"decision": decision, "note": str(data.get("note", "")) or gate_reason}
+    # `failed` first: "the critic never answered" is not the same as "the critic escalated".
+    note = failed or str(data.get("note", "")) or gate_reason
+    return {"decision": decision, "note": note}

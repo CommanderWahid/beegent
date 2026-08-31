@@ -48,6 +48,16 @@ class TestEscalationGate(unittest.TestCase):
 class TestCriticInput(unittest.TestCase):
     """`unresolved` carries the only real signal the critic has."""
 
+    def test_a_raising_call_fails_safe_instead_of_propagating(self):
+        """run_critic() never raises: the SDK's retries are already spent by the time it does."""
+        from beegent.pipeline import critic as mod
+
+        with mock.patch.object(mod, "chat_json", side_effect=RuntimeError("Rate limit exceeded")):
+            verdict = mod.run_critic("Atlantis", "land cover", [], [], [], "nothing verified")
+        self.assertEqual(verdict["decision"], "needs_human_review")
+        self.assertIn("RuntimeError", verdict["note"])
+        self.assertIn("Rate limit", verdict["note"], "say WHY, or it reads as a real escalation")
+
     def test_dead_end_reasons_reach_the_critic_prompt(self):
         seen = {}
 
