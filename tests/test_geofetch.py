@@ -17,9 +17,9 @@ from beegent.pipeline.geofetch import (
 from beegent.schemas import Candidate
 from beegent.web_tools import HttpResult, WebTools
 
-from tests.fixtures import (ANGLE, DEFAULT_PAGES, ED_2025, FEED, FILE_SIZE, FILE_URL,
-                            GOOD_REPORT, HAPPY_PATH, PORTAL, FakeLLM, _Msg, make_tools,
-                            run_agent, run_stage, tool_turn)
+from tests.fixtures import (ANGLE, DEFAULT_PAGES, ED_2025, EDITION_XML, FEED, FILE_SIZE,
+                            FILE_URL, GOOD_REPORT, HAPPY_PATH, PORTAL, FakeLLM, _Msg,
+                            make_tools, run_agent, run_stage, tool_turn)
 
 
 class TestAgentLoop(unittest.TestCase):
@@ -422,16 +422,85 @@ class TestFormatContainers(unittest.TestCase):
 class TestToolResultCap(unittest.TestCase):
     """Every kept tool result is resent on every step, so an uncapped one is a per-step tax."""
 
+    @staticmethod
+    def _page(n_urls=40, body_chars=None):
+        """A fetch_page-shaped result whose body dwarfs everything else."""
+        body = "z" * (body_chars or config.TOOL_RESULT_MAX_CHARS * 3)
+        return {"requested_url": PORTAL, "final_url": PORTAL, "status": 200,
+                "content_type": "application/xml", "truncated": False, "body": body,
+                "urls_found": [f"https://atlantis.example/f/{i}.parquet" for i in range(n_urls)]}
+
     def test_oversized_result_is_capped_before_entering_history(self):
         from beegent.pipeline.geofetch import _fit
-        huge = "z" * (config.TOOL_RESULT_MAX_CHARS * 5)
-        out = _fit(huge)
+        out = _fit(self._page())
         self.assertLess(len(out), config.TOOL_RESULT_MAX_CHARS + 200)
         self.assertIn("truncated", out)  # the model must know it was cut
 
     def test_small_result_is_untouched(self):
         from beegent.pipeline.geofetch import _fit
-        self.assertEqual(_fit("small"), "small")
+        small = {"url": "u", "ok": True}
+        self.assertEqual(json.loads(_fit(small)), small)
+        self.assertNotIn("truncated_fields", _fit(small))
+
+    def test_a_non_dict_result_is_still_capped(self):
+        """_fit is called directly in tests; a stray non-dict must not escape the budget."""
+        from beegent.pipeline.geofetch import _fit
+        out = _fit("z" * (config.TOOL_RESULT_MAX_CHARS * 5))
+        self.assertLess(len(out), config.TOOL_RESULT_MAX_CHARS + 200)
+
+    def test_urls_found_survives_when_the_body_does_not(self):
+        """The regression this exists to prevent: urls_found is what the agent navigates by."""
+        from beegent.pipeline.geofetch import _fit
+        page = self._page()
+        out = json.loads(_fit(page))
+        self.assertEqual(out["urls_found"], page["urls_found"], "every URL must survive")
+        self.assertLess(len(out["body"]), len(page["body"]), "the body is what pays")
+        self.assertEqual(out["truncated_fields"], ["body"])
+
+    def test_output_is_always_valid_json(self):
+        """A JSON document cut mid-token is its own hazard for a weak model."""
+        from beegent.pipeline.geofetch import _fit
+        for cap in (400, 1_000, 4_000, 20_000):
+            with self.subTest(cap=cap), mock.patch.object(config, "TOOL_RESULT_MAX_CHARS", cap):
+                out = json.loads(_fit(self._page()))  # raises if it is not valid JSON
+                self.assertEqual(out["requested_url"], PORTAL, "identity fields always survive")
+
+    def test_scalars_alone_over_cap_degrade_without_raising(self):
+        from beegent.pipeline.geofetch import _fit
+        with mock.patch.object(config, "TOOL_RESULT_MAX_CHARS", 50):
+            out = _fit(self._page())
+        self.assertLess(len(out), 50 + 200)
+
+    def test_web_search_drops_trailing_results_not_mid_entry(self):
+        """Search hits are ranked, so the tail is the cheapest part to lose."""
+        from beegent.pipeline.geofetch import _fit
+        hits = [{"title": f"hit {i}", "href": f"https://atlantis.example/{i}",
+                 "snippet": "s" * 300} for i in range(60)]
+        out = json.loads(_fit({"query": "q", "engine": "ddg-html", "results": hits}))
+        self.assertGreater(len(out["results"]), 0, "some hits must survive")
+        self.assertLess(len(out["results"]), len(hits))
+        self.assertEqual(out["results"], hits[: len(out["results"])], "kept from the front")
+        self.assertEqual(out["truncated_fields"], ["results"])
+
+    def test_a_real_oversized_page_still_shows_the_agent_the_file_url(self):
+        """The whole seam: WebTools output -> _fit -> what the model actually reads."""
+        from beegent.pipeline.geofetch import _fit
+        padded = EDITION_XML.replace("</feed>", "<junk>" + "q" * 60_000 + "</junk></feed>")
+        tools = make_tools(pages={**DEFAULT_PAGES, ED_2025: (200, "application/xml", padded)})
+        page = tools.fetch_page(ED_2025)
+        self.assertGreater(len(json.dumps(page)), config.TOOL_RESULT_MAX_CHARS, "must be over cap")
+        out = json.loads(_fit(page))
+        self.assertIn(FILE_URL, out["urls_found"], "the one URL that matters must reach the model")
+        self.assertEqual(out["truncated_fields"], ["body"])
+
+    def test_a_link_far_down_a_long_page_still_reaches_the_model(self):
+        """The realistic shape: cutting the serialized tail loses exactly this URL."""
+        from beegent.pipeline.geofetch import _fit
+        buried = EDITION_XML.replace("<entry>", "<junk>" + "q" * 12_000 + "</junk><entry>")
+        tools = make_tools(pages={**DEFAULT_PAGES, ED_2025: (200, "application/xml", buried)})
+        out = json.loads(_fit(tools.fetch_page(ED_2025)))
+        self.assertIn(FILE_URL, out["urls_found"])
+        self.assertNotIn(FILE_URL, out["body"], "it is past the cut - urls_found is why it survives")
 
     def test_cap_applies_in_the_agent_loop(self):
         pages = dict(DEFAULT_PAGES)

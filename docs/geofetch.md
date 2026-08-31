@@ -56,6 +56,11 @@ A fourth function, `report_result`, is the only way the agent can finish.
 — URLs buried in prose, XML metadata, or string literals inside a JavaScript bundle. Weak models
 summarise a page and miss the one URL that matters; a flat list is harder to overlook.
 
+A result larger than `TOOL_RESULT_MAX_CHARS` is shrunk field by field rather than cut off, in the
+order `text`, `body`, `results`, `links`, `urls_found` — so the page's prose is spent first and its
+URLs last, and what the model receives is always valid JSON. A `truncated_fields` key names whatever
+was shrunk, so the agent knows what it is not being shown.
+
 ## What the agent is told
 
 The system prompt teaches **method, not examples**: do reconnaissance first, search the web early,

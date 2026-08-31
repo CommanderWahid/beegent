@@ -301,9 +301,9 @@ class GeofetchAgent:
             return False
         self._call_seen[call_key] = step
 
-        payload = json.dumps(self._dispatch(name, args))
-        self._harvest(payload)  # harvest URLs from the FULL payload, then truncate
-        content = _fit(payload)
+        result_json = self._dispatch(name, args)
+        self._harvest(json.dumps(result_json))  # harvest from the FULL payload, then shrink
+        content = _fit(result_json)
         if rescued:
             content = (f"Result of your {name} call (you wrote it as plain text - emit "
                        "REAL tool calls next time): " + content)
@@ -383,12 +383,55 @@ def _finish(result: AgentResult, outcome: dict, args: dict) -> AgentResult:
     return result
 
 
-def _fit(payload: str) -> str:
-    """Cap one tool result before it enters the conversation."""
-    if len(payload) <= config.TOOL_RESULT_MAX_CHARS:
+_CUT_NOTE = " ...[result truncated - refetch a narrower path or a specific page for more]"
+
+#: Shrunk in this order when a result is over budget - urls_found is what the agent navigates by.
+_SHRINK_ORDER = ("text", "body", "results", "links", "urls_found")
+_NOTE_ROOM = 120  # chars held back for the truncated_fields key
+
+
+def _room(out: dict, key: str, cap: int) -> int:
+    """Chars left for out[key] once everything else in the result is serialized."""
+    return cap - len(json.dumps(dict(out, **{key: type(out[key])()})))
+
+
+def _clip(value, room: int):
+    """Slice a string, or keep list entries from the front while they fit - the tail is cheapest."""
+    if not isinstance(value, str):
+        kept = []
+        for item in value:
+            if len(json.dumps(kept + [item])) > room:
+                break
+            kept.append(item)
+        return kept
+    out = value[: max(0, room - 2)]  # 2: the pair of quotes json.dumps adds
+    while out and len(json.dumps(out)) > room:
+        # Escaping inflates: a quote costs 2 chars serialized, so measure rather than count.
+        out = out[: min(int(len(out) * room / len(json.dumps(out))), len(out) - 1)]
+    return out
+
+
+def _fit(result) -> str:
+    """Cap one tool result before it enters the conversation, cheapest field first."""
+    payload = json.dumps(result)
+    cap = config.TOOL_RESULT_MAX_CHARS
+    if len(payload) <= cap:
         return payload
-    return payload[: config.TOOL_RESULT_MAX_CHARS] + (
-        " ...[result truncated - refetch a narrower path or a specific page for more]")
+    if not isinstance(result, dict):
+        return payload[:cap] + _CUT_NOTE
+    out, cut = dict(result), []
+    for key in _SHRINK_ORDER:
+        if len(json.dumps(out)) <= cap - _NOTE_ROOM:
+            break
+        if not out.get(key):
+            continue
+        out[key] = _clip(out[key], _room(out, key, cap - _NOTE_ROOM))
+        cut.append(key)
+    if cut:
+        out["truncated_fields"] = cut  # so the model knows what it is not seeing
+    payload = json.dumps(out)
+    # Backstop: an unknown oversized key must still not blow the budget.
+    return payload if len(payload) <= cap else payload[:cap] + _CUT_NOTE
 
 
 def _compact_history(messages: list) -> None:
