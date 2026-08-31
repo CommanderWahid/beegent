@@ -83,6 +83,11 @@ the server actually sent. **They are allowed to disagree**, and a disagreement i
 `claim` is a whitelist, not a copy of whatever the model returned, so a model cannot inject a key
 that reads like a probe result.
 
+**The values inside it keep whatever shape the model produced.** `evidence` is usually a list of
+strings, but a model that emits a list of objects (`{"step": …, "url": …, "note": …}`) has its chain
+stored as written — it is a richer record, and flattening it would discard what the model bothered
+to separate. Read `evidence` as "a list", not "a list of strings".
+
 ### Reading `verification`
 
 | Field | Meaning |

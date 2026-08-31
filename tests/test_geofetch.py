@@ -291,6 +291,25 @@ class TestResolveAngle(unittest.TestCase):
         found, _ = run_stage(turns)
         self.assertEqual(found.claim["evidence"], ["found it on page 2"])
 
+    def test_a_report_with_null_optionals_still_verifies(self):
+        """Groq validates arguments against our schema; a null for "no value" must be legal."""
+        turns = list(HAPPY_PATH[:-1]) + [tool_turn("report_result", {
+            **GOOD_REPORT, "checksum": None, "failure_reason": None})]
+        found, _ = run_stage(turns)
+        self.assertIsNotNone(found, "a null optional must not cost a verified download")
+        self.assertEqual(found.verification["payload_type"], "parquet")
+        for key in ("checksum", "failure_reason"):
+            self.assertNotIn(key, found.claim, "a null carries no claim")
+
+    def test_structured_evidence_survives_as_the_model_wrote_it(self):
+        """claim is what the model SAID - url+note beats a sentence, so do not flatten it."""
+        chain = [{"step": "Fetched start page", "url": PORTAL, "note": "directory listing"},
+                 {"step": "Identified file", "url": FILE_URL, "note": "21.44 GB"}]
+        turns = list(HAPPY_PATH[:-1]) + [
+            tool_turn("report_result", {**GOOD_REPORT, "evidence": chain})]
+        found, _ = run_stage(turns)
+        self.assertEqual(found.claim["evidence"], chain)
+
     def test_claim_is_a_whitelist_not_a_passthrough(self):
         """An unknown model-authored key must not reach the output."""
         turns = list(HAPPY_PATH[:-1]) + [tool_turn("report_result", {
@@ -417,6 +436,43 @@ class TestFormatContainers(unittest.TestCase):
         for kind in ("7z", "zip", "gzip"):
             with self.subTest(container=kind):
                 self.assertIsNone(self._verdict("GeoParquet", kind))
+
+
+class TestToolSchemas(unittest.TestCase):
+    """The schema is a contract with a validator we do not control - Groq enforces it."""
+
+    @staticmethod
+    def _functions():
+        from beegent.pipeline.geofetch import TOOL_SCHEMAS
+        return [f["function"] for f in TOOL_SCHEMAS]
+
+    def test_optional_properties_carry_no_type_constraint(self):
+        """Two verified downloads were binned for shapes we failed to anticipate; stop guessing."""
+        for fn in self._functions():
+            params = fn["parameters"]
+            for name, spec in params["properties"].items():
+                if name in params.get("required", []):
+                    continue
+                with self.subTest(tool=fn["name"], property=name):
+                    self.assertNotIn("type", spec, "an unanticipated shape must not 400")
+                    self.assertNotIn("enum", spec, "enum is checked independently of type")
+                    self.assertTrue(spec.get("description"), "still steer the model with prose")
+
+    def test_required_properties_stay_typed(self):
+        """A missing required argument is a real error, and our own dispatch reports it."""
+        typed = {(fn["name"], name): spec.get("type")
+                 for fn in self._functions()
+                 for name, spec in fn["parameters"]["properties"].items()
+                 if name in fn["parameters"].get("required", [])}
+        self.assertEqual(typed, {("fetch_page", "url"): "string",
+                                 ("web_search", "query"): "string",
+                                 ("probe_url", "url"): "string",
+                                 ("report_result", "found"): "boolean"})
+
+    def test_the_schemas_serialize_to_json(self):
+        """They go on the wire verbatim on every step, so a non-serializable value is fatal."""
+        from beegent.pipeline.geofetch import TOOL_SCHEMAS
+        self.assertIn("report_result", json.dumps(TOOL_SCHEMAS))
 
 
 class TestToolResultCap(unittest.TestCase):

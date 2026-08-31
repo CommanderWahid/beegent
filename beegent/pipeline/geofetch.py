@@ -91,8 +91,7 @@ TOOL_SCHEMAS = [
                        "API bases usually appear.",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string"},
-            "accept": {"type": "string", "description": "Accept header, for content "
-                                                        "negotiation"}},
+            "accept": {"description": "Accept header, for content negotiation"}},
             "required": ["url"]}}},
     {"type": "function", "function": {
         "name": "web_search",
@@ -113,15 +112,14 @@ TOOL_SCHEMAS = [
         "description": "Final answer. Only after a successful probe_url of download_url.",
         "parameters": {"type": "object", "properties": {
             "found": {"type": "boolean"},
-            "download_url": {"type": "string"},
-            "edition": {"type": "string", "description": "edition/version id"},
-            "vintage_date": {"type": "string"},
-            "file_size_bytes": {"type": "integer"},
-            "checksum": {"type": "string", "description": "if the service publishes one"},
-            "evidence": {"type": "array", "items": {"type": "string"},
-                         "description": "ordered discovery chain"},
-            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-            "failure_reason": {"type": "string"}},
+            "download_url": {"description": "the direct download URL"},
+            "edition": {"description": "edition/version id"},
+            "vintage_date": {"description": "the edition's date"},
+            "file_size_bytes": {"description": "size the service advertises"},
+            "checksum": {"description": "if the service publishes one"},
+            "evidence": {"description": "ordered discovery chain"},
+            "confidence": {"description": "high | medium | low"},
+            "failure_reason": {"description": "why the search failed, when found is false"}},
             "required": ["found"]}}},
 ]
 
