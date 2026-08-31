@@ -48,9 +48,17 @@ job is to produce those four - it cannot rediscover them:
               because the agent must first discover the download service before it can even
               begin looking for the file.
 
-              Being wrong is cheap - the agent fetches it, can search from there, and the
-              bytes are verified either way. So guess deep rather than playing safe: an
-              angle with no URL is discarded entirely.
+              NEVER invent an OPAQUE IDENTIFIER - a UUID, hash, or long random record id -
+              that you have not actually read somewhere. A wrong path is recoverable: the
+              agent walks up the host, searches, and tries platform conventions. A wrong id
+              is neither searchable nor derivable, so the angle is dead on arrival. When the
+              deep path needs an id you do not have, stop at the listing or API base that
+              enumerates them (.../api/1/datasets/ , .../collections/) and let the agent
+              find the id there.
+
+              Being wrong about a PATH is cheap - the agent fetches it, can search from
+              there, and the bytes are verified either way. So guess deep rather than
+              playing safe: an angle with no URL is discarded entirely.
   "dataset" - the file in plain words, including its geographic extent, e.g.
               "building footprints, whole country" or "level-2 administrative boundaries".
   "format"  - the file format to ask for. If the use case named one, use exactly that on
