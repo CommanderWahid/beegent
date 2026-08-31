@@ -8,6 +8,7 @@ from unittest import mock
 from beegent.connectors import (
     CONNECTORS,
     DatabricksConnector,
+    GroqConnector,
     LLMConnector,
     OllamaConnector,
     OpenAICompatConnector,
@@ -19,15 +20,18 @@ from tests.fixtures import ANGLE, HAPPY_PATH, FakeLLM, make_tools
 
 
 class TestRegistry(unittest.TestCase):
-    def test_both_shipped_connectors_are_registered(self):
-        self.assertIsInstance(create_connector("ollama"), OllamaConnector)
-        self.assertIsInstance(create_connector("databricks"), DatabricksConnector)
+    def test_every_shipped_connector_is_registered(self):
+        for name, cls in (("ollama", OllamaConnector), ("databricks", DatabricksConnector),
+                          ("groq", GroqConnector)):
+            with self.subTest(provider=name):
+                self.assertIsInstance(create_connector(name), cls)
 
     def test_unknown_backend_names_the_alternatives(self):
         with self.assertRaises(ValueError) as ctx:
             create_connector("gpt5-turbo-max")
         self.assertIn("ollama", str(ctx.exception))
         self.assertIn("databricks", str(ctx.exception))
+        self.assertIn("groq", str(ctx.exception))
 
     def test_every_connector_satisfies_the_contract(self):
         for name, cls in CONNECTORS.items():
@@ -94,9 +98,10 @@ class TestTokenUsageExtractionIsAConnectorConcern(unittest.TestCase):
 class TestBackendQuirksAreOwnedLocally(unittest.TestCase):
     """Each quirk used to be an `if config.LLM_BACKEND == ...` in shared code."""
 
-    def test_only_ollama_opts_into_json_mode(self):
-        # Databricks' Claude endpoints 400 on response_format; Ollama accepts it.
+    def test_response_format_is_opted_into_per_backend(self):
+        # Databricks' Claude endpoints 400 on response_format; Ollama and Groq accept it.
         self.assertTrue(OllamaConnector.supports_response_format)
+        self.assertTrue(GroqConnector.supports_response_format)
         self.assertFalse(DatabricksConnector.supports_response_format)
 
     def test_databricks_retries_without_temperature(self):
@@ -141,6 +146,39 @@ class TestValidate(unittest.TestCase):
         with mock.patch.dict(os.environ, {"DATABRICKS_HOST": "x.cloud.databricks.com",
                                           "DATABRICKS_TOKEN": ""}):
             self.assertIn("DATABRICKS_TOKEN", DatabricksConnector().validate())
+
+    def test_groq_reports_a_missing_key_without_a_request(self):
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": ""}), \
+             mock.patch("requests.get", side_effect=AssertionError("must not be called")):
+            self.assertIn("GROQ_API_KEY", GroqConnector(log=lambda m: None).validate())
+
+    def test_groq_reports_an_unreachable_endpoint_rather_than_raising(self):
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "gsk_x"}), \
+             mock.patch("requests.get", side_effect=OSError("boom")):
+            problem = GroqConnector(log=lambda m: None).validate()
+        self.assertIn("OSError", problem)
+        self.assertIn("GROQ_API_KEY", problem)
+
+    def test_groq_names_a_role_model_it_no_longer_serves(self):
+        """A retired id must fail here, not as a 404 mid-angle after tokens are spent."""
+        served = mock.Mock(**{"json.return_value": {"data": [{"id": "openai/gpt-oss-20b"}]}})
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "gsk_x"}), \
+             mock.patch("requests.get", return_value=served):
+            problem = GroqConnector(log=lambda m: None).validate()
+        self.assertIn(GroqConnector.DEFAULT_MODELS["geofetch"], problem)
+        # and what to switch to, or the message costs a round trip to act on
+        self.assertIn("openai/gpt-oss-20b", problem)
+
+    def test_groq_validates_the_override_not_the_default(self):
+        """model_for() is the seam, so --geofetch-model is what actually gets checked."""
+        every = [{"id": m} for m in set(GroqConnector.DEFAULT_MODELS.values())]
+        served = mock.Mock(**{"json.return_value": {"data": every}})
+        with mock.patch.dict(os.environ, {"GROQ_API_KEY": "gsk_x"}), \
+             mock.patch("requests.get", return_value=served):
+            c = GroqConnector(log=lambda m: None)
+            self.assertIsNone(c.validate())
+            with mock.patch.dict(os.environ, {"GEOFETCH_MODEL": "retired-model"}):
+                self.assertIn("retired-model", c.validate())
 
     def test_host_accepts_bare_or_full_url(self):
         want = "https://x.cloud.databricks.com/serving-endpoints"
@@ -234,7 +272,9 @@ class TestExtensibility(unittest.TestCase):
         self.assertEqual([c.model_for(r) for r in c.ROLES], ["p-1", "g-1", "c-1"])
         # and config.py names no backend beyond the default selector value
         src = inspect.getsource(cfg)
-        for token in ("databricks", "deepseek", "qwen3", "claude", "selfcontained"):
+        # not "llama": the default LLM_BACKEND value "ollama" contains it
+        for token in ("databricks", "deepseek", "qwen3", "claude", "groq", "gpt-oss",
+                      "selfcontained"):
             self.assertNotIn(token, src, f"config.py should not mention {token!r}")
 
     def test_usage_is_normalized_even_when_a_backend_reports_none(self):

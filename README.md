@@ -102,7 +102,7 @@ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
 No API keys. Search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs
-locally. Databricks and other backends: [Backends](docs/backends.md).
+locally. Groq, Databricks and other backends: [Backends](docs/backends.md).
 
 Full walkthrough: [Getting started](docs/getting-started.md).
 
@@ -125,7 +125,7 @@ Pre-1.0: interfaces may change.
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, first run, reading the result |
 | [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
-| [Backends](docs/backends.md) | Ollama, Databricks, writing a connector |
+| [Backends](docs/backends.md) | Ollama, Groq, Databricks, writing a connector |
 | [Architecture](docs/architecture.md) | The four stages and how a run flows |
 | [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the five guardrails |
 | [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
@@ -137,7 +137,7 @@ The test suite is fully offline — no network, no API key, no LLM — so you ca
 loop without spending a token:
 
 ```bash
-uv run python -m unittest discover -s tests -v      # 107 tests, ~1s
+uv run python -m unittest discover -s tests -v      # 111 tests, ~1s
 uvx ruff check --select F,ERA .
 ```
 

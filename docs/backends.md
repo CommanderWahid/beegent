@@ -1,8 +1,8 @@
 # Backends
 
-Beegent talks to LLMs through a connector. Two ship with it: **Ollama** (the default, local, no
-key) and **Databricks** (a worked example of a hosted one). Each connector owns its own models,
-credentials and quirks.
+Beegent talks to LLMs through a connector. Three ship with it: **Ollama** (the default, local, no
+key), **Groq** (hosted, needs only an API key) and **Databricks** (a worked example of a hosted one
+behind a workspace). Each connector owns its own models, credentials and quirks.
 
 ## Ollama
 
@@ -21,6 +21,41 @@ like a model failure and is a context failure.
 `qwen3:8b` is the geofetch default for a reason. It has the most reliable tool calling of the local
 models tried here, and at ~5.2 GB it fits an 8 GB card alongside a 16k context. `qwen3:14b` was
 measured at ~10 GB resident with 39% spilled to CPU, and exceeded `LLM_TIMEOUT` on a single call.
+
+## Groq
+
+Hosted and fast, and the cheapest backend to get onto — an API key is the whole setup.
+
+```bash
+cp .env.example .env
+# set GROQ_API_KEY
+
+uv run python -m beegent.run --backend groq \
+  --country Kenya --use-case "administrative boundaries for a flood-response dashboard"
+```
+
+`openai/gpt-oss-120b` is the default for all three roles. That is not a shortcut: Groq's
+production chat tier is two models wide, and the other one — `openai/gpt-oss-20b` — is better used
+as a deliberate `GEOFETCH_MODEL` override when you want the 20-step loop cheaper, than as a
+shipped default on the role where tool-calling quality matters most.
+
+Groq retires model ids periodically, so `validate()` does more than check the key: it lists
+`GET /openai/v1/models` once at startup, names any role model that is no longer served, and prints
+the ids that are. That turns a 404 fired mid-angle after tokens are spent into a message before the
+run starts, with the replacement in it.
+
+This is not hypothetical — it fired on the first live run here. `llama-3.3-70b-versatile` was the
+original geofetch default and was shut down on 2026-08-16; the startup check caught it, the run
+cost nothing. Note that the [models page](https://console.groq.com/docs/models) lagged: it still
+listed the model as production. The [deprecations
+page](https://console.groq.com/docs/deprecations) is the one to read, and your account's own
+`/models` response is more authoritative than either.
+
+The practical limit is tokens per minute, not price. Geofetch is input-heavy — see
+[Performance](performance.md) — so a long run on the free tier will spend time in the SDK's
+rate-limit backoff. `MAX_ANGLES=1` is the lever for a first run.
+
+Set `GROQ_BASE_URL` to point at a proxy; it defaults to `https://api.groq.com/openai/v1`.
 
 ## Databricks
 

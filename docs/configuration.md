@@ -52,6 +52,7 @@ put them in `.env` (see `.env.example`); real environment variables win over `.e
 |---|---|
 | `LLM_BACKEND` | Which connector to use, if `--backend` is not given |
 | `PLANNER_MODEL`, `GEOFETCH_MODEL`, `CRITIC_MODEL` | Per-role model override |
+| `GROQ_API_KEY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN` | Backend credentials — see [Backends](backends.md) |
 | Any integer setting in `beegent/config.py` | Overrides that pipeline tunable — see below |
 
 ## Pipeline settings

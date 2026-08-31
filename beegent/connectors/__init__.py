@@ -2,16 +2,18 @@
 
 from beegent.connectors.base import LLMConnector, OpenAICompatConnector
 from beegent.connectors.databricks import DatabricksConnector
+from beegent.connectors.groq import GroqConnector
 from beegent.connectors.ollama import OllamaConnector
 
 #: provider key -> class. `config.LLM_BACKEND` selects one of these.
 CONNECTORS: dict[str, type[LLMConnector]] = {
     "ollama": OllamaConnector,  # the default: local, no key, no cost
     "databricks": DatabricksConnector,
+    "groq": GroqConnector,
 }
 
-__all__ = ["CONNECTORS", "DatabricksConnector", "LLMConnector", "OllamaConnector",
-           "OpenAICompatConnector", "create_connector"]
+__all__ = ["CONNECTORS", "DatabricksConnector", "GroqConnector", "LLMConnector",
+           "OllamaConnector", "OpenAICompatConnector", "create_connector"]
 
 
 def create_connector(provider: str, **kwargs) -> LLMConnector:
