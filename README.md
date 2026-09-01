@@ -35,11 +35,11 @@ file in five steps:
     [geofetch]       dataset  = 'cadastral building footprints (batiments), whole France'
     [geofetch]       format   = 'GeoParquet'
     [geofetch]       vintage  = 'latest'
-[step 1] -> fetch_page({"url": ".../etalab-cadastre/latest/"})
-[step 2] -> fetch_page({"url": ".../etalab-cadastre/2026-06-01/geoparquet/"})
-[step 3] -> fetch_page({"url": ".../2026-06-01/geoparquet/france/"})
-[step 4] -> probe_url({"url": ".../geoparquet/france/cadastre.parquet"})
-[step 5] -> report_result({"found": true, "confidence": "high", ...})
+    [step 1] -> fetch_page({"url": ".../etalab-cadastre/latest/"})
+    [step 2] -> fetch_page({"url": ".../etalab-cadastre/2026-06-01/geoparquet/"})
+    [step 3] -> fetch_page({"url": ".../2026-06-01/geoparquet/france/"})
+    [step 4] -> probe_url({"url": ".../geoparquet/france/cadastre.parquet"})
+    [step 5] -> report_result({"found": true, "confidence": "high", ...})
     [geofetch] VERIFIED in 5 step(s), 5 request(s), 12,916 tokens
     [geofetch] path: fetch_page -> fetch_page -> fetch_page -> probe_url -> report_result
 ```
@@ -67,7 +67,7 @@ Technical scoping is manual work: search for a country's data, open a dozen endp
 which are real, compare editions, write it up.
 
 ```
-business scoping -> [technical scoping: BEEGENT] -> dev pipeline -> validation -> deployment
+business scoping -> [technical scoping: BEEGENT] -> devs -> validation -> deployment
 ```
 
 Beegent turns that into a review-ready draft. It does not replace the review — it does the
@@ -84,9 +84,7 @@ itself. If nothing was verified, a critic decides whether to re-plan or ask for 
 planner -> catalogs -> geofetch (per angle) -> gate -> critic -> (replan | needs_human_review)
 ```
 
-Nothing in the codebase knows about any specific portal, vendor or country: the prompt teaches
-generic catalogue conventions (CKAN, udata, DCAT, STAC, OGC), and the test suite runs the whole
-agent against a portal for a country that does not exist.
+Nothing in the codebase knows about any specific portal, vendor or country.
 
 See [Architecture](docs/architecture.md) and [The geofetch agent](docs/geofetch.md).
 
@@ -102,7 +100,8 @@ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
 No API keys. Search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs
-locally. Groq, Mistral, Databricks and other backends: [Backends](docs/backends.md).
+locally. <br>
+You can add your backend (connector) or use the provided ones: Groq, Mistral, Databricks: [Backends](docs/backends.md).
 
 Full walkthrough: [Getting started](docs/getting-started.md).
 
@@ -111,10 +110,12 @@ Full walkthrough: [Getting started](docs/getting-started.md).
 **Working prototype.** It resolves real datasets on live portals, and the verification guarantee
 holds. Known limits, stated plainly:
 
-- The **catalog stage is an empty stub** — the catalog layer is unbuilt.
-- **No JavaScript execution.** A download that only appears after a client-side interaction is
-  unreachable, and is reported as an honest failure rather than guessed at.
-- Results depend on the model. Small local models miss things a larger one finds.
+- The **catalog stage is an empty stub** — the catalog layer is unbuilt yet.
+- **No JavaScript execution.** The agent routes *around* a JS app shell rather than through it,
+  looking for the machine-readable service behind it ([how](docs/geofetch.md)). What stays out of
+  reach is a download URL built by a client-side interaction; that is reported as an honest failure
+  rather than guessed at.
+- **Results depend on the model.** Small local models miss things a larger one finds.
 - Portal APIs change. An angle that worked last month may dead-end today.
 
 Pre-1.0: interfaces may change.

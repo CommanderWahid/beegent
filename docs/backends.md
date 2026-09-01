@@ -123,10 +123,6 @@ nothing to check returns `None` explicitly.
 Both chat methods return the same 2-tuple shape. **Unpack before testing the result** — a tuple is
 always truthy, so `if chat_json(...)` would read a `None` answer as an answer.
 
-### A different wire format
-
-Subclass `LLMConnector` directly and implement `chat_json` and `chat_tools` yourself. Mapping the
-response into `(result, TokenUsage)` is the whole integration job.
 
 ### Token accounting
 
@@ -138,5 +134,4 @@ chat methods.
 ## Search needs no backend
 
 Web search is independent of the LLM backend and needs no key: a DuckDuckGo HTML → DuckDuckGo Lite
-→ Bing fallback chain. A paid search provider was tried and dropped because its ranking was not
-better on real queries.
+→ Bing fallback chain.

@@ -1,7 +1,7 @@
 # The geofetch agent
 
-Geofetch is the stage that does the work. One tool-calling agent runs per angle, and it is the only
-part of Beegent that touches the web.
+Geofetch is the stage that does the work.<br>
+One tool-calling agent runs per angle, and it is the only part of Beegent that touches the web.<br><br>
 
 ```mermaid
 flowchart TD
@@ -50,34 +50,23 @@ flowchart TD
 | `web_search` | `query` | Results from a DuckDuckGo HTML → DuckDuckGo Lite → Bing chain, with bot-block detection |
 | `probe_url` | `url` | HTTP status, total size, and the payload type identified from the first 16 bytes |
 
-A fourth function, `report_result`, is the only way the agent can finish.
-
-`urls_found` lists absolute URLs in the page body that the `links` list does **not** already carry
-— URLs buried in prose, XML metadata, or string literals inside a JavaScript bundle. Weak models
-summarise a page and miss the one URL that matters; a flat list is harder to overlook.
-
-A result larger than `TOOL_RESULT_MAX_CHARS` is shrunk field by field rather than cut off, in the
-order `text`, `body`, `results`, `links`, `urls_found` — so the page's prose is spent first and its
-URLs last, and what the model receives is always valid JSON. A `truncated_fields` key names whatever
-was shrunk, so the agent knows what it is not being shown.
 
 ## What the agent is told
 
 The system prompt teaches **method, not examples**: do reconnaissance first, search the web early,
-try standard catalogue API conventions (CKAN, udata, DCAT, GeoNetwork, STAC, OGC), mine
-`urls_found`, filter server-side rather than scraping, compare explicit edition dates when asked
-for "latest", never invent a URL, and verify before reporting.
+try standard catalogue API conventions, mine urls, filter server-side rather than scraping, compare explicit edition dates when asked for "latest", never invent a URL, and verify before reporting.
 
 Nothing in it names a real portal. That is what lets the same prompt work for any country.
 
 ## No browser, no JavaScript
 
-Beegent does not run a headless browser. A JavaScript app shell is handled by finding the
-machine-readable service behind it — a `<link rel=alternate>` hint, a platform API convention on
-the same host, or an API base mined out of a `<script src>` bundle.
+Beegent runs no headless browser and executes no JavaScript. A JS app shell is not rendered — it is
+routed *around*.
 
-The cost is real and worth knowing: **a download link that only exists after a client-side
-interaction is unreachable**, and Beegent reports that as an honest failure rather than guessing.
+| | |
+|---|---|
+| **Handled** | The machine-readable service behind the shell — a `<link rel=alternate>` hint, a platform API convention, or an API base mined. |
+| **Not handled** | A download URL built by a client-side interaction. It appears in no served byte, so there is nothing to discover — reported as an honest failure, never guessed |
 
 ## The five guardrails
 
@@ -92,15 +81,13 @@ deterministic code before accepting it:
 | 4 | Independent re-probe | A bad status, or an HTML error page served at a download URL |
 | 5 | Format match | A live file of the wrong type — a GeoJSON cannot satisfy a GeoParquet request |
 
-A rejected report is handed back to the model, which must keep searching. **A fabricated URL cannot
+<br>A rejected report is handed back to the model, which must keep searching. **A fabricated URL cannot
 reach the output; the worst case is an honest failure** recorded under `unresolved`.
 
-Checks 3 and 4 look redundant and are not.
 
 ## When the agent gets stuck
 
-- **Repeated calls.** An identical tool call is answered from memory with a warning instead of
-  spending HTTP budget. After `GEOFETCH_MAX_REPEATS` (3) suppressions the angle is abandoned.
+- **Repeated calls.** After `GEOFETCH_MAX_REPEATS` the angle is abandoned.
 - **Context pressure.** Old tool results are trimmed in place every turn so the system prompt and
   the task survive on small local context windows.
 - **Malformed tool calls.** Some models stop emitting native tool calls in long conversations and

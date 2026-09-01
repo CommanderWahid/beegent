@@ -1,6 +1,7 @@
 # Architecture
 
-Beegent runs four stages in a loop. The loop lives in `beegent/run.py:discover()`.
+Beegent runs four stages in a loop. <br>
+The loop lives in `beegent/run.py:discover()`.<br><br>
 
 ```mermaid
 flowchart TD
