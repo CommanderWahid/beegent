@@ -1,9 +1,11 @@
-"""Shared fixtures: a synthetic portal for a FICTIONAL country."""
+"""Shared test data and fixtures: a synthetic portal for a FICTIONAL country."""
 
 import json
+import os
 
-from unittest import mock
+import pytest
 
+from beegent import llm
 from beegent.pipeline.geofetch import GeofetchAgent, resolve_angle
 from beegent.schemas import Candidate, SearchAngle, TokenUsage
 from beegent.web_tools import HttpResult, WebTools
@@ -68,7 +70,8 @@ DEFAULT_PAGES = {
 }
 
 
-def make_tools(pages=None, binaries=None):
+def build_tools(pages=None, binaries=None):
+    """WebTools over the synthetic portal - the make_tools fixture hands this out."""
     return WebTools(transport=fake_transport(pages or DEFAULT_PAGES,
                                              binaries or {FILE_URL: FILE_SIZE}))
 
@@ -141,10 +144,7 @@ HAPPY_PATH = [
 ]
 
 
-# --- tool-layer tests ---
-
-
-def _cand(url, resource, conf=0.95):
+def make_candidate(url, resource, conf=0.95):
     return Candidate(url=url, title="t", source="geofetch",
                      confidence=conf, resource_url=resource)
 
@@ -160,19 +160,54 @@ ANGLE = SearchAngle(
 )
 
 
-def run_agent(turns, tools=None, max_steps=10, fmt="GeoParquet"):
+# --- fixtures ---
+
+
+@pytest.fixture
+def make_tools():
+    """Factory for a WebTools over custom pages/binaries."""
+    return build_tools
+
+
+@pytest.fixture
+def tools():
+    """WebTools over the default synthetic portal."""
+    return build_tools()
+
+
+@pytest.fixture
+def run_agent(monkeypatch):
     """Run the agent against a scripted LLM. Returns (AgentResult, FakeLLM)."""
-    llm = FakeLLM(turns)
-    agent = GeofetchAgent(tools=tools or make_tools(), max_steps=max_steps)
-    with mock.patch("beegent.pipeline.geofetch.chat_tools", llm):
-        res = agent.run(PORTAL, "Atlantis land cover, forest layer", fmt, "latest")
-    return res, llm
+    def _run(turns, tools=None, max_steps=10, fmt="GeoParquet"):
+        fake = FakeLLM(turns)
+        agent = GeofetchAgent(tools=tools or build_tools(), max_steps=max_steps)
+        monkeypatch.setattr("beegent.pipeline.geofetch.chat_tools", fake)
+        return agent.run(PORTAL, "Atlantis land cover, forest layer", fmt, "latest"), fake
+    return _run
 
 
-def run_stage(turns, angle=ANGLE, raise_on=None, error=None):
+@pytest.fixture
+def run_stage(monkeypatch):
     """Drive resolve_angle() with a scripted LLM. No search stub: the angle carries the URL."""
-    llm = FakeLLM(turns, raise_on=raise_on, error=error)
-    tools = make_tools()
-    with mock.patch("beegent.pipeline.geofetch.WebTools", lambda **kw: tools), \
-         mock.patch("beegent.pipeline.geofetch.chat_tools", llm):
+    def _run(turns, angle=ANGLE, raise_on=None, error=None):
+        fake = FakeLLM(turns, raise_on=raise_on, error=error)
+        built = build_tools()
+        monkeypatch.setattr("beegent.pipeline.geofetch.WebTools", lambda **kw: built)
+        monkeypatch.setattr("beegent.pipeline.geofetch.chat_tools", fake)
         return resolve_angle(angle, log=lambda m: None)
+    return _run
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    """An empty os.environ - monkeypatch has no clear-all of its own."""
+    for key in list(os.environ):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture
+def reset_llm_usage():
+    """The per-role meter is module-level, so a test that spends starts and ends clean."""
+    llm.reset_usage()
+    yield
+    llm.reset_usage()

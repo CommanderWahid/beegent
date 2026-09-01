@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """The planner: how a model reply becomes SearchAngles, and what gets dropped."""
 
-import unittest
-from unittest import mock
-
 from beegent import config
 from beegent.pipeline import planner
 from beegent.pipeline.planner import plan
@@ -20,48 +17,54 @@ def angle(**over):
     return {**base, **over}
 
 
-def run_plan(angles, country="France", use_case="building footprints as a geoparquet file"):
+def run_plan(monkeypatch, angles, country="France",
+             use_case="building footprints as a geoparquet file"):
     """plan() with chat_json stubbed - the suite never calls a model."""
     reply = ({"angles": angles}, TokenUsage())
-    with mock.patch.object(planner, "chat_json", lambda role, messages: reply):
-        return plan(country, use_case)
+    monkeypatch.setattr(planner, "chat_json", lambda role, messages: reply)
+    return plan(country, use_case)
 
 
-class TestAngleValidation(unittest.TestCase):
-    """Behaviour that already existed and was unpinned - the planner had no test file."""
-
-    def test_the_prompt_forbids_inventing_opaque_identifiers(self):
-        """The only guard on this is the prompt, so pin that it is still in it."""
-        self.assertIn("NEVER invent an OPAQUE IDENTIFIER", planner.SYSTEM)
-
-    def test_an_angle_without_a_url_is_dropped(self):
-        got = run_plan([angle(url=""), angle()])
-        self.assertEqual(len(got), 1)
-
-    def test_a_non_http_url_is_dropped(self):
-        self.assertEqual(run_plan([angle(url="ftp://x.example/data/")]), [])
-
-    def test_an_angle_without_a_description_is_dropped(self):
-        self.assertEqual(run_plan([{"url": DEEP}]), [])
-
-    def test_the_list_is_capped_at_max_angles(self):
-        self.assertEqual(len(run_plan([angle() for _ in range(config.MAX_ANGLES + 3)])),
-                         config.MAX_ANGLES)
-
-    def test_a_missing_dataset_falls_back_to_the_description(self):
-        got = run_plan([angle(dataset="")])
-        self.assertEqual(got[0].dataset, "national mapping agency bulk server")
-
-    def test_a_raising_call_yields_no_angles_rather_than_propagating(self):
-        """No angles is a survivable run that escalates; a traceback loses the whole run."""
-        with mock.patch.object(planner, "chat_json", side_effect=RuntimeError("429")):
-            self.assertEqual(plan("France", "buildings"), [])
-
-    def test_no_answer_yields_no_angles_rather_than_raising(self):
-        """chat_json returning None means 'no answer', never a negative answer."""
-        with mock.patch.object(planner, "chat_json", lambda role, messages: (None, TokenUsage())):
-            self.assertEqual(plan("France", "buildings"), [])
+# --- angle validation: behaviour that already existed and was unpinned ---
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+def test_the_prompt_forbids_inventing_opaque_identifiers():
+    """The only guard on this is the prompt, so pin that it is still in it."""
+    assert "NEVER invent an OPAQUE IDENTIFIER" in planner.SYSTEM
+
+
+def test_an_angle_without_a_url_is_dropped(monkeypatch):
+    assert len(run_plan(monkeypatch, [angle(url=""), angle()])) == 1
+
+
+def test_a_non_http_url_is_dropped(monkeypatch):
+    assert run_plan(monkeypatch, [angle(url="ftp://x.example/data/")]) == []
+
+
+def test_an_angle_without_a_description_is_dropped(monkeypatch):
+    assert run_plan(monkeypatch, [{"url": DEEP}]) == []
+
+
+def test_the_list_is_capped_at_max_angles(monkeypatch):
+    got = run_plan(monkeypatch, [angle() for _ in range(config.MAX_ANGLES + 3)])
+    assert len(got) == config.MAX_ANGLES
+
+
+def test_a_missing_dataset_falls_back_to_the_description(monkeypatch):
+    got = run_plan(monkeypatch, [angle(dataset="")])
+    assert got[0].dataset == "national mapping agency bulk server"
+
+
+def test_a_raising_call_yields_no_angles_rather_than_propagating(monkeypatch):
+    """No angles is a survivable run that escalates; a traceback loses the whole run."""
+    def boom(role, messages):
+        raise RuntimeError("429")
+
+    monkeypatch.setattr(planner, "chat_json", boom)
+    assert plan("France", "buildings") == []
+
+
+def test_no_answer_yields_no_angles_rather_than_raising(monkeypatch):
+    """chat_json returning None means 'no answer', never a negative answer."""
+    monkeypatch.setattr(planner, "chat_json", lambda role, messages: (None, TokenUsage()))
+    assert plan("France", "buildings") == []

@@ -138,7 +138,7 @@ The test suite is fully offline — no network, no API key, no LLM — so you ca
 loop without spending a token:
 
 ```bash
-uv run python -m unittest discover -s tests -v      # 144 tests, ~1s
+uv run pytest                                       # 182 cases, ~1s
 uvx ruff check --select F,ERA .
 ```
 
