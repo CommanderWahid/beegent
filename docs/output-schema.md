@@ -83,10 +83,8 @@ the server actually sent. **They are allowed to disagree**, and a disagreement i
 `claim` is a whitelist, not a copy of whatever the model returned, so a model cannot inject a key
 that reads like a probe result.
 
-**The values inside it keep whatever shape the model produced.** `evidence` is usually a list of
-strings, but a model that emits a list of objects (`{"step": …, "url": …, "note": …}`) has its chain
-stored as written — it is a richer record, and flattening it would discard what the model bothered
-to separate. Read `evidence` as "a list", not "a list of strings".
+`evidence` is usually a list of strings, but a model that emits a list of objects (`{"step": …, "url": …, "note": …}`) has its chain stored as written — it is a richer record, and flattening it would discard what the model bothered
+to separate.
 
 ### Reading `verification`
 
@@ -96,7 +94,7 @@ to separate. Read `evidence` as "a list", not "a list of strings".
 | `status` | HTTP status — `206` for a successful range request, `200` if the server ignored the range |
 | `payload_type` | Identified from the first bytes: `parquet`, `zip`, `sqlite/geopackage`, `tiff/geotiff`, `pdf`, `gzip`, `7z`, `json-text`, `xml/html-text` |
 | `total_size_bytes` | From `Content-Range`, when the server reports it |
-| `first_bytes_hex` | The raw evidence. `50415231` is `PAR1` (Parquet); `504b0304` is a ZIP; `53514c69746520666f726d6174203300` is SQLite/GeoPackage |
+| `first_bytes_hex` | The raw evidence. |
 
 ### `confidence`
 
@@ -149,6 +147,4 @@ The run-wide token counts are the sum of the `by_role` buckets. See
 `cached_tokens` is a **subset of `prompt_tokens`**, not an addition to it — it is the part of the
 input a backend served from its own prompt cache, so it is never included in `total_tokens`. Read it
 as a ratio against `prompt_tokens`: on a backend that caches, a high ratio means most of each
-request cost nothing, which matters most where a rate limit is measured in tokens per minute. A
-backend that does not report cache hits leaves it at `0`, which is indistinguishable from a genuine
-zero — the key is always present so the file can be read without knowing which backend ran.
+request cost nothing, which matters most where a rate limit is measured in tokens per minute.

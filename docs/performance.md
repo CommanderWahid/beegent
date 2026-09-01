@@ -24,18 +24,14 @@ step count and dominated by input — roughly 5:1 input to output on a measured 
 The consequence: **what enters the conversation matters more than how long it runs**. One large
 tool result is charged again on every subsequent step.
 
-## Optimisation techniques
+## Optimisations
 
-Before the code gets a say: **where an angle starts decides more than any of it.** A bulk file
-server (`.../data/latest/`) resolved in 5 steps for 16,027 tokens; a portal landing page failed
-after 20 steps and 197,883 — up to **12×** on the same question. The planner is instructed to give
-the deepest concrete path it can name — a bulk directory, an Atom/STAC/OGC/CSW endpoint, an API
-base — and to avoid search pages, dataset landing pages and publisher homepages. If your runs are
-expensive, look at the `url` values in the plan first.
+Before the code gets a say: **where an angle starts decides more than any of it.** <br>
+The starting URL an angle is given matters more than every code-level optimisation combined. Measured: a bulk file server (.../data/latest/) resolved in 5 steps for 16,027 tokens, while a portal landing page failed after 20 steps and 197,883 tokens — a 12× spread on the same question. So the planner is instructed to name the deepest concrete path it can (bulk directory, Atom/STAC/OGC/CSW endpoint, API base) and avoid search pages, dataset landing pages and publisher homepages. Debugging an expensive run starts with the url values in the plan.
 
 Everything below is applied by the code, ordered by how much it moves the bill.
 
-### Context-window management
+### 1. Context-window management
 
 The conversation is re-sent on every step, so this is the dominant category.
 
@@ -45,7 +41,7 @@ The conversation is re-sent on every step, so this is the dominant category.
 | **Sliding window over history** — the last `KEEP_FULL_TOOL_RESULTS` (3) tool results stay full, older ones are rewritten in place to `TRIM_TOOL_TO` (500) | `geofetch.py:_compact_history()` | The prompt stops growing with step count |
 | **Assistant-message capping** at `TRIM_ASSISTANT_TO` (800) | same | Bounds a reasoning model's rambling in the replayed history |
 
-### Payload reduction at the source
+### 2. Payload reduction at the source
 
 Cheaper than trimming later, because what never arrives never costs a token.
 
@@ -57,7 +53,7 @@ Cheaper than trimming later, because what never arrives never costs a token.
 | **Field caps** — `MAX_LINKS` (80), `MAX_URLS_FOUND` (60) | `web_tools.py:fetch_page()` | Bounds one page's contribution regardless of how link-heavy it is |
 | **`urls_found` deduplication** against `links` | `web_tools.py:fetch_page()` | A URL already carried by the anchor list is not paid for twice |
 
-### Repeat suppression and reuse
+### 3. Repeat suppression and reuse
 
 | Technique | Where | What it buys |
 |---|---|---|
@@ -66,7 +62,7 @@ Cheaper than trimming later, because what never arrives never costs a token.
 | **Carry-forward across re-planning** — candidates verified in iteration N are never re-resolved in N+1 | `run.py:discover()` | Saves a full agent run per carried candidate |
 | **Result dedupe** on `normalize_url(resource_url or url)` | `run.py:_rank()` | Two angles that land on the same file collapse to one candidate |
 
-### Budgets and early exit
+### 4. Budgets and early exit
 
 | Technique | Where | What it buys |
 |---|---|---|
@@ -87,28 +83,18 @@ cost:  5 angle(s), 28 request(s), 177,629 tokens (139,161 in / 38,468 out)
 
 `run.totals["by_role"]` gives this split on every run. Three things it reveals:
 
-- **The planner and critic are cheap in tokens but not in output.** A planner call is 893 in /
-  1,049 out; a critic call 399 in / 505 out. Both are *output*-heavy, the inverse of geofetch,
-  because reasoning models emit `<think>` blocks — and output is the expensive half on hosted
-  endpoints.
+- **The planner and critic are cheap in tokens but not in output.** 
 - **A dead angle can cost as much as a successful one.** Dead ends carry their own `cost` block
   precisely so this is visible.
 - **`cached_tokens` says how much of the input you were not charged full price for.** It rides on
   the same buckets, and the summary adds a line when it is non-zero:
 
   ```
-  cached:     1,024 of the input tokens (10%)
+  cached: 1,024 of the input tokens (10%)
   ```
 
 ## Deliberately not done
 
-**Angles run one at a time.** Parallelising them looks like free speedup and is not: Ollama serves
-one request at a time by default, so calls queue anyway; `web_search` scrapes search engines with
-no API key, and N simultaneous searches from one IP is the reliable way to get blocked; and rate
-limits are limits on a *rate*, so compressing the same tokens into less time multiplies the
-per-minute figure. Parallelism never reduces total tokens, only the window they land in.
+**Angles run one at a time** — parallelising them is not free speedup. Ollama serves one request at a time, so concurrent calls just queue; web_search scrapes engines keylessly, and N simultaneous searches from one IP is the reliable way to get blocked; and rate limits are limits on a rate, so the same tokens in less time multiplies the per-minute figure. Parallelism shrinks the window, never the total.
 
-**Prompt caching is deferred.** Only the system prompt, tool schemas and task are stable across
-steps — about 1,539 tokens, charged on every call. Everything after them is rewritten by history
-compaction, so it cannot be cached without giving up compaction, which is what keeps the prompt
-from growing without bound in the first place.
+**Prompt caching is deferred** — only the system prompt, tool schemas and task (~1,539 tokens) are stable across steps and charged every call. Everything after them is rewritten by history compaction, so caching it would mean giving up the thing that keeps the prompt from growing without bound.
