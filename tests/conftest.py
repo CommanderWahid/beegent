@@ -40,6 +40,44 @@ EDITION_XML = f"""<?xml version="1.0"?>
 
 PARQUET_HEAD = b"PAR1" + b"\x00" * 12
 
+# --- synthetic feature services on the same fictional portal ---
+
+OAPIF_ITEMS = f"{FEED}/collections/landcover/items"
+OAPIF_NO_COUNT = f"{FEED}/collections/roads/items"
+OAPIF_EMPTY = f"{FEED}/collections/nothing/items"
+API_ERROR_URL = f"{FEED}/collections/broken/items"
+WFS_CAPS_URL = f"{FEED}/ows?service=WFS&request=GetCapabilities"
+ESRI_QUERY_URL = f"{FEED}/FeatureServer/0/query"
+
+
+def _feature(kind="Polygon"):
+    return ('{"type":"Feature","geometry":{"type":"%s","coordinates":[]},'
+            '"properties":{"cover":"forest"}}' % kind)
+
+
+# numberMatched sits AFTER the features array, exactly as real services emit it.
+OAPIF_JSON = ('{"type":"FeatureCollection","features":['
+              + ",".join(_feature() for _ in range(3))
+              + '],"numberReturned":3,"numberMatched":4212}')
+
+OAPIF_NO_COUNT_JSON = ('{"type":"FeatureCollection","features":['
+                       + ",".join(_feature("LineString") for _ in range(2))
+                       + '],"numberReturned":2}')
+
+OAPIF_EMPTY_JSON = ('{"type":"FeatureCollection","features":[],'
+                    '"numberReturned":0,"numberMatched":0}')
+
+# Served with HTTP 200 - the case a leading "{" used to wave through.
+API_ERROR_JSON = '{"error":{"code":400,"message":"Invalid where clause","details":[]}}'
+
+WFS_CAPS_XML = ('<?xml version="1.0"?><WFS_Capabilities version="2.0.0">'
+                '<FeatureTypeList><FeatureType><Name>atl:landcover</Name>'
+                '</FeatureType></FeatureTypeList></WFS_Capabilities>')
+
+ESRI_QUERY_JSON = ('{"geometryType":"esriGeometryPolygon","spatialReference":{"wkid":4326},'
+                   '"fields":[{"name":"cover"}],"features":[{"attributes":{"cover":"forest"},'
+                   '"geometry":{"rings":[]}}],"exceededTransferLimit":true}')
+
 
 def fake_transport(pages: dict, binaries: dict):
     """Build a transport closure over fake pages and Range-honouring binary files."""
@@ -56,8 +94,10 @@ def fake_transport(pages: dict, binaries: dict):
                 "content-length": str(total)}, PARQUET_HEAD, url)
         if url in pages:
             status, ctype, body = pages[url]
-            return HttpResult(status, {"content-type": ctype},
-                              body.encode()[:max_bytes], url)
+            raw = body.encode()
+            # A real server declares the FULL length and we read only max_bytes of it.
+            return HttpResult(status, {"content-type": ctype, "content-length": str(len(raw))},
+                              raw[:max_bytes], url)
         return HttpResult(404, {"content-type": "text/html"},
                           b"<html>not found</html>", url)
     return transport
@@ -67,6 +107,12 @@ DEFAULT_PAGES = {
     PORTAL: (200, "text/html", PORTAL_HTML),
     FEED: (200, "application/atom+xml", FEED_XML),
     ED_2025: (200, "application/atom+xml", EDITION_XML),
+    OAPIF_ITEMS: (200, "application/geo+json", OAPIF_JSON),
+    OAPIF_NO_COUNT: (200, "application/geo+json", OAPIF_NO_COUNT_JSON),
+    OAPIF_EMPTY: (200, "application/geo+json", OAPIF_EMPTY_JSON),
+    API_ERROR_URL: (200, "application/json", API_ERROR_JSON),
+    WFS_CAPS_URL: (200, "text/xml", WFS_CAPS_XML),
+    ESRI_QUERY_URL: (200, "application/json", ESRI_QUERY_JSON),
 }
 
 

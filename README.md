@@ -128,7 +128,7 @@ Pre-1.0: interfaces may change.
 | [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
 | [Backends](docs/backends.md) | Ollama, Groq, Mistral, Databricks, writing a connector |
 | [Architecture](docs/architecture.md) | The four stages and how a run flows |
-| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the five guardrails |
+| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the seven guardrails |
 | [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
 | [Performance](docs/performance.md) | What a run costs and which settings move it |
 
@@ -138,7 +138,7 @@ The test suite is fully offline — no network, no API key, no LLM — so you ca
 loop without spending a token:
 
 ```bash
-uv run pytest                                       # 182 cases, ~1s
+uv run pytest                                       # 198 cases, ~1s
 uvx ruff check --select F,ERA .
 ```
 

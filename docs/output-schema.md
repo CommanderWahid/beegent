@@ -93,8 +93,26 @@ to separate.
 | `ok` | The probe succeeded and the payload matched the requested format |
 | `status` | HTTP status — `206` for a successful range request, `200` if the server ignored the range |
 | `payload_type` | Identified from the first bytes: `parquet`, `zip`, `sqlite/geopackage`, `tiff/geotiff`, `pdf`, `gzip`, `7z`, `json-text`, `xml/html-text` |
-| `total_size_bytes` | From `Content-Range`, when the server reports it |
+| `total_size_bytes` | From `Content-Range`, when the server reports it. **`null` when `access` is `api`** — one page's length is not the dataset's size |
 | `first_bytes_hex` | The raw evidence. |
+| `access` | `file` or `api`. Decided by whether the reply carried service metadata, never by the model |
+
+#### When `access` is `api`
+
+Sixteen magic bytes can tell a Parquet file from a zip, but they cannot tell a feature service from
+an error page — every JSON document starts with `{`. So a text payload gets a second, bounded read
+and is parsed structurally.
+
+| Field | Meaning |
+|---|---|
+| `shape` | `geojson_featurecollection`, `esrijson_featureset`, `wfs_featurecollection`, or `wfs_capabilities` |
+| `feature_count` | How many features the endpoint holds — **N** |
+| `count_is_exact` | `true` only when the service reported a total (`numberMatched`, `hits`, `count`). `false` means `feature_count` is a **lower bound**: the features visible in one page |
+| `geometry_type` | From the first feature, in OGC names — Esri's `esriGeometryPolygon` is normalised to `Polygon` |
+
+Always read `feature_count` together with `count_is_exact` — otherwise "the server said 40,232" and
+"we counted the 1,000 that fitted in a page" are the same number in the same field. A round count
+with `count_is_exact: false` is almost always a default page cap, not a small dataset.
 
 ### `confidence`
 

@@ -44,6 +44,7 @@ MAX_TEXT_CHARS = _int("MAX_TEXT_CHARS", 2_000)  # HTML text kept; the agent navi
 MAX_LINKS = _int("MAX_LINKS", 80)  # hyperlinks reported per page
 MAX_URLS_FOUND = _int("MAX_URLS_FOUND", 60)  # entries in fetch_page()'s flat urls_found list
 PROBE_BYTES = 16  # NOT overridable: a correctness floor, the geopackage signature is 16 bytes
+PROBE_TEXT_BYTES = _int("PROBE_TEXT_BYTES", 65_536)  # second read when the payload is JSON/XML
 
 # Verified beats self-assessed, so even a "low" self-report outranks anything unverified.
 # Not overridable: a dict and its float default, with no per-run reason to retune them.

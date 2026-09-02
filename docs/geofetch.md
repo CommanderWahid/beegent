@@ -32,7 +32,7 @@ flowchart TD
     T2 --- WEB
     T3 --- WEB
 
-    G{"guardrail chain, in order<br/>1 gave up before 5 requests, bounce once<br/>2 found=true with no download_url<br/>3 URL never seen in a tool result, invented<br/>4 independent re-probe fails or serves HTML<br/>5 magic bytes do not match the requested format"}
+    G{"guardrail chain, in order<br/>1 gave up before 5 requests, bounce once<br/>2 found=true with no download_url<br/>3 URL never seen in a tool result, invented<br/>4 independent re-probe fails or serves HTML<br/>5 magic bytes do not match the requested format<br/>6 text that is no feature collection, or a capabilities doc<br/>7 a service returning zero features"}
     LLM -->|report_result| G
     G -->|any check fails: REPORT REJECTED| LLM
 
@@ -68,7 +68,7 @@ routed *around*.
 | **Handled** | The machine-readable service behind the shell — a `<link rel=alternate>` hint, a platform API convention, or an API base mined. |
 | **Not handled** | A download URL built by a client-side interaction. It appears in no served byte, so there is nothing to discover — reported as an honest failure, never guessed |
 
-## The five guardrails
+## The seven guardrails
 
 The model can only finish by calling `report_result`. The harness then checks the report with
 deterministic code before accepting it:
@@ -80,6 +80,8 @@ deterministic code before accepting it:
 | 3 | Provenance | A URL that never appeared in any tool result — invented, rejected even if it is live |
 | 4 | Independent re-probe | A bad status, or an HTML error page served at a download URL |
 | 5 | Format match | A live file of the wrong type — a GeoJSON cannot satisfy a GeoParquet request |
+| 6 | Feature service is data | A capabilities document, or text that parses as no feature collection at all — some services answer errors with HTTP 200 |
+| 7 | Non-empty result | A live, well-formed endpoint returning **zero** features. The API analogue of check 5 |
 
 <br>A rejected report is handed back to the model, which must keep searching. **A fabricated URL cannot
 reach the output; the worst case is an honest failure** recorded under `unresolved`.
@@ -92,6 +94,18 @@ reach the output; the worst case is an honest failure** recorded under `unresolv
   the task survive on small local context windows.
 - **Malformed tool calls.** Some models stop emitting native tool calls in long conversations and
   write JSON as plain text. That is parsed, executed anyway, and the model reminded.
+
+## Known limitations
+
+- **No JavaScript.** A download URL that exists only after a client-side interaction appears in no
+  served byte. Reported as an honest failure — see the table above.
+- **Coordinate reference systems are never inspected.** The agent verifies *bytes*, not geometry.
+  The case that matters: China mandates the obfuscated GCJ-02 datum, so data from Chinese sources
+  is shifted by a few hundred metres relative to WGS84. The file verifies, the geometry parses, and
+  the coordinates are wrong. There is no fix inside a byte-level probe, and detecting it by host
+  country would mean hardcoding a country — which this codebase does not do anywhere.
+- **`feature_count` may be a lower bound.** See `count_is_exact` in
+  [the output schema](output-schema.md).
 
 ## Related
 

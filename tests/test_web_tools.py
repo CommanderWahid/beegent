@@ -3,10 +3,12 @@
 
 import pytest
 
+from beegent import config
 from beegent.web_tools import WebTools, classify_magic, summarize_html
 
-from tests.conftest import (DEFAULT_PAGES, ED_2025, FEED, FILE_SIZE, FILE_URL, PORTAL,
-                            PORTAL_HTML)
+from tests.conftest import (API_ERROR_URL, DEFAULT_PAGES, ED_2025, ESRI_QUERY_URL, FEED,
+                            FILE_SIZE, FILE_URL, OAPIF_EMPTY, OAPIF_ITEMS, OAPIF_NO_COUNT,
+                            PORTAL, PORTAL_HTML, WFS_CAPS_URL)
 
 # --- magic bytes ---
 
@@ -145,3 +147,79 @@ def test_request_budget_enforced(tools):
     tools.fetch_page(FEED)
     with pytest.raises(RuntimeError):
         tools.fetch_page(ED_2025)
+
+
+# --- feature services: 16 magic bytes cannot tell one from an error page ---
+
+
+def test_oapif_reports_an_exact_count_from_number_matched(tools):
+    """numberMatched sits after the features array, so this is the whole point of the 2nd read."""
+    probe = tools.probe_url(OAPIF_ITEMS)
+    assert probe["access"] == "api"
+    assert probe["shape"] == "geojson_featurecollection"
+    assert probe["feature_count"] == 4212
+    assert probe["count_is_exact"]
+    assert probe["geometry_type"] == "Polygon"
+
+
+def test_a_page_count_is_reported_as_not_exact(tools):
+    """Without numberMatched, the page length is a lower bound and must say so."""
+    probe = tools.probe_url(OAPIF_NO_COUNT)
+    assert probe["feature_count"] == 2
+    assert not probe["count_is_exact"], "a page count must never look like a total"
+    assert probe["geometry_type"] == "LineString"
+
+
+def test_total_size_bytes_is_null_for_a_service(tools):
+    """One page's content-length is not the dataset's size."""
+    assert tools.probe_url(OAPIF_ITEMS)["total_size_bytes"] is None
+
+
+def test_an_error_served_with_http_200_is_not_data(tools):
+    """The case a leading '{' used to wave through."""
+    probe = tools.probe_url(API_ERROR_URL)
+    assert probe["status"] == 200
+    assert not probe["ok"]
+    assert probe.get("shape") is None
+    assert probe["access"] == "file", "nothing identified it as a service"
+
+
+def test_an_empty_feature_collection_is_still_parsed(tools):
+    """Recognised, counted at zero - the report guardrail is what rejects it."""
+    probe = tools.probe_url(OAPIF_EMPTY)
+    assert probe["shape"] == "geojson_featurecollection"
+    assert probe["feature_count"] == 0
+
+
+def test_wfs_capabilities_is_recognised_as_metadata(tools):
+    probe = tools.probe_url(WFS_CAPS_URL)
+    assert probe["shape"] == "wfs_capabilities"
+    assert probe["feature_count"] == 0
+
+
+def test_esri_json_maps_its_geometry_names_to_ogc(tools):
+    probe = tools.probe_url(ESRI_QUERY_URL)
+    assert probe["shape"] == "esrijson_featureset"
+    assert probe["geometry_type"] == "Polygon", "esriGeometryPolygon must be normalised"
+    assert not probe["count_is_exact"], "exceededTransferLimit means the count is capped"
+
+
+def test_a_static_geojson_file_is_not_an_api(make_tools):
+    """A plain FeatureCollection with no service metadata stays access=file."""
+    plain = ('{"type":"FeatureCollection","features":[{"type":"Feature",'
+             '"geometry":{"type":"Point","coordinates":[0,0]},"properties":{}}]}')
+    pages = dict(DEFAULT_PAGES)
+    pages["https://x.example/data.geojson"] = (200, "application/geo+json", plain)
+    probe = make_tools(pages=pages).probe_url("https://x.example/data.geojson")
+    assert probe["access"] == "file"
+    assert probe["feature_count"] == 1
+    assert probe["total_size_bytes"] is not None, "a file keeps its size"
+
+
+def test_a_truncated_document_counts_what_it_can_see(monkeypatch, tools):
+    """Cut mid-document, the tail metadata is gone - a lower bound is the honest answer."""
+    monkeypatch.setattr(config, "PROBE_TEXT_BYTES", 200)
+    probe = tools.probe_url(OAPIF_ITEMS)
+    assert probe["shape"] == "geojson_featurecollection"
+    assert not probe["count_is_exact"]
+    assert probe["feature_count"] < 4212

@@ -17,12 +17,13 @@ from beegent.pipeline.geofetch import (
     extract_inline_tool_call,
     resolve_angle,
 )
-from beegent.schemas import Candidate
+from beegent.schemas import Candidate, SearchAngle
 from beegent.web_tools import HttpResult, WebTools
 
-from tests.conftest import (ANGLE, DEFAULT_PAGES, ED_2025, EDITION_XML, FEED, FILE_SIZE,
-                            FILE_URL, GOOD_REPORT, HAPPY_PATH, PORTAL, FakeLLM, _Msg,
-                            build_tools, tool_turn)
+from tests.conftest import (ANGLE, API_ERROR_URL, DEFAULT_PAGES, ED_2025, EDITION_XML, FEED,
+                            FILE_SIZE, FILE_URL, GOOD_REPORT, HAPPY_PATH, OAPIF_EMPTY,
+                            OAPIF_ITEMS, PORTAL, WFS_CAPS_URL, FakeLLM, _Msg, build_tools,
+                            tool_turn)
 
 # --- the agent loop ---
 
@@ -591,3 +592,85 @@ def test_cap_applies_in_the_agent_loop(monkeypatch, make_tools):
     agent.run(PORTAL, "d", "GeoParquet", "latest")
     biggest = max(len(m["content"]) for m in llm.seen_messages if m.get("role") == "tool")
     assert biggest < config.TOOL_RESULT_MAX_CHARS + 200
+
+
+# --- feature services: a reply is not proof, so the harness parses and counts ---
+
+
+def _report(url):
+    return tool_turn("report_result", {"found": True, "download_url": url,
+                                       "confidence": "high"})
+
+
+def test_a_verified_api_endpoint_carries_the_measured_field_set(run_agent):
+    turns = [tool_turn("probe_url", {"url": OAPIF_ITEMS}), _report(OAPIF_ITEMS)]
+    res, _ = run_agent(turns, fmt="GeoJSON")
+    assert res.found
+    v = res.verification
+    assert v["access"] == "api"
+    assert v["shape"] == "geojson_featurecollection"
+    assert v["feature_count"] == 4212
+    assert v["count_is_exact"]
+    assert v["geometry_type"] == "Polygon"
+    assert v["total_size_bytes"] is None, "a page's length is not the dataset's size"
+
+
+def test_zero_features_is_rejected_then_the_agent_recovers(run_agent):
+    """Live, well-formed and empty is not the dataset - the API analogue of a format mismatch."""
+    turns = [tool_turn("probe_url", {"url": OAPIF_EMPTY}),
+             tool_turn("probe_url", {"url": OAPIF_ITEMS}),
+             _report(OAPIF_EMPTY), _report(OAPIF_ITEMS)]
+    res, llm = run_agent(turns, fmt="GeoJSON")
+    assert res.found
+    assert res.download_url == OAPIF_ITEMS
+    rejections = [m for m in llm.seen_messages
+                  if m.get("role") == "tool" and "ZERO" in m.get("content", "")]
+    assert len(rejections) == 1, "the empty endpoint must be bounced exactly once"
+
+
+def test_a_capabilities_document_is_rejected_as_not_data(run_agent):
+    """GetCapabilities lists the layers; it is metadata, and it used to pass as XML."""
+    turns = [tool_turn("probe_url", {"url": WFS_CAPS_URL})] + [_report(WFS_CAPS_URL)] * 3
+    res, llm = run_agent(turns, fmt="GeoJSON", max_steps=4)
+    assert not res.found
+    assert any("capabilities document" in m.get("content", "")
+               for m in llm.seen_messages if m.get("role") == "tool")
+
+
+def test_an_error_reply_served_with_http_200_is_rejected(run_agent):
+    """The exact case a leading '{' waved through before."""
+    turns = [tool_turn("probe_url", {"url": API_ERROR_URL})] + [_report(API_ERROR_URL)] * 3
+    res, llm = run_agent(turns, fmt="GeoJSON", max_steps=4)
+    assert not res.found
+    assert any("not a recognisable feature collection" in m.get("content", "")
+               for m in llm.seen_messages if m.get("role") == "tool")
+
+
+def test_an_api_candidate_reaches_the_pipeline_seam(run_stage):
+    """resolve_angle maps the service fields through to Candidate.verification unchanged."""
+    angle = SearchAngle(description="Atlantis land cover service", channel_hint="catalog",
+                        rationale="r", url=PORTAL, dataset="land cover", format="GeoJSON")
+    found, missed = run_stage([tool_turn("probe_url", {"url": OAPIF_ITEMS}),
+                               _report(OAPIF_ITEMS)], angle=angle)
+    assert missed is None
+    assert found.resource_url == OAPIF_ITEMS
+    assert found.verification["access"] == "api"
+    assert found.verification["feature_count"] == 4212
+
+
+def test_the_prompt_teaches_feature_service_conventions():
+    """Much of the world publishes only a queryable service; the prompt must say so."""
+    from beegent.pipeline.geofetch import SYSTEM_PROMPT
+
+    for token in ("/collections/", "GetFeature", "FeatureServer", "geoserver"):
+        assert token in SYSTEM_PROMPT, token
+    assert "GetCapabilities only LISTS" in SYSTEM_PROMPT, "and that capabilities is not data"
+
+
+def test_the_prompt_asks_for_native_script_search_without_naming_a_language():
+    """Examples were French and Spanish - instances, and the exact regional skew to avoid."""
+    from beegent.pipeline.geofetch import SYSTEM_PROMPT
+
+    assert "own script" in SYSTEM_PROMPT
+    for instance in ("telechargement", "descarga"):
+        assert instance not in SYSTEM_PROMPT, f"{instance!r} teaches an instance, not a method"

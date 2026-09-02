@@ -32,8 +32,10 @@ using this GENERIC methodology:
    frequently hosts the download API itself.
 1b. SEARCH THE WEB EARLY. When the portal is opaque, web_search is usually
    the shortest path: query the dataset's HUMAN name (not its catalogue
-   identifier) + "download" + the format, or + "API"; also try the
-   country's own language ("telechargement", "descarga", ...). Zero
+   identifier) + "download" + the format, or + "API". ALSO search in the
+   country's own official language, written in its own script - most of
+   the world's portals, dataset titles and documentation are not in
+   English, and an English-only query silently misses them. Zero
    results usually means the engine bot-blocked you, not that nothing
    exists - rephrase and mix with other techniques. Also: fetch_page a
    <script src> bundle from a JS shell and scan it for absolute API base
@@ -50,8 +52,20 @@ using this GENERIC methodology:
    udata -> /api/1/datasets/<slug>/ ; CKAN ->
    /api/3/action/package_show?id=<slug> ; GeoNetwork ->
    /geonetwork/srv/api/records/<uuid>/formatters/xml ; DCAT ->
-   /catalog.rdf or /data.json ; STAC -> /stac or /collections. Trying
-   these on a discovered host is systematic variation, not invention.
+   /catalog.rdf or /data.json ; STAC -> /stac or /collections ; GeoNode ->
+   /api/v2/. Trying these on a discovered host is systematic variation,
+   not invention.
+2b'. A FEATURE SERVICE IS A VALID ANSWER. Much of the world publishes
+   geodata only as a queryable service, never as a bulk file, and such an
+   endpoint is a legitimate download_url. Ask it for the DATA, not for its
+   description: OGC API-Features -> /collections then
+   /collections/<id>/items?f=json ; WFS -> ?service=WFS&request=GetFeature
+   with typename and outputFormat (GetCapabilities only LISTS the layers,
+   it is not data and will be rejected) ; ArcGIS -> a FeatureServer or
+   MapServer layer at /<n>/query?where=1=1&outFields=*&f=geojson ;
+   GeoServer -> /geoserver/<workspace>/ows. Some of these answer an error
+   with HTTP 200, so a reply is not proof - the harness parses the body and
+   counts the features, and an empty result set is rejected.
 2c. MINE urls_found. Every fetch_page result includes urls_found - the
    complete list of absolute URLs in the body. When a page discusses
    downloads (news posts, documentation, metadata records), the concrete
@@ -351,10 +365,32 @@ class GeofetchAgent:
                     f"{self._task_format} (expected {sorted(allowed)}). This is the wrong "
                     "file or the wrong dataset - find the requested format.")
                 return None
+        elif probe.get("shape"):
+            # A parsed feature service: structure is the evidence, magic bytes cannot be.
+            ok = status_ok
+            if status_ok and probe["shape"] == "wfs_capabilities":
+                self._reject_reason = (
+                    "REPORT REJECTED: this is a capabilities document - it describes the "
+                    "service, it does not serve the data. Request the features themselves "
+                    "(GetFeature with a typename and an outputFormat) and report that URL.")
+                return None
+            if status_ok and not probe.get("feature_count"):
+                self._reject_reason = (
+                    "REPORT REJECTED: the endpoint is live and well-formed but returns ZERO "
+                    "features - this is not the dataset. Check the collection or layer name "
+                    "and any filters, or find a different endpoint.")
+                return None
         elif fmt_l in TEXT_FORMATS:
             ok = (status_ok
                   and payload in ("json-text", "xml/html-text", "unknown")
                   and "html" not in probe.get("content_type", ""))
+            if ok and payload in ("json-text", "xml/html-text"):
+                # Reaching here means the service probe could not recognise it.
+                self._reject_reason = (
+                    "REPORT REJECTED: the URL returns text but not a recognisable feature "
+                    "collection - this looks like an error reply or a landing document. "
+                    "Some services answer errors with HTTP 200.")
+                return None
         else:
             ok = probe.get("ok", False)
         if not ok:

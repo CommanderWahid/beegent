@@ -1,5 +1,6 @@
 """WebTools - the deterministic web layer the geofetch agent drives."""
 
+import json
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -22,6 +23,21 @@ MAGIC_SIGNATURES = [
 ]
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>\\)\]]+")
+
+# Esri names its geometries differently; map to the OGC names the rest of the world uses.
+_ESRI_GEOMETRY = {
+    "esriGeometryPoint": "Point",
+    "esriGeometryMultipoint": "MultiPoint",
+    "esriGeometryPolyline": "LineString",
+    "esriGeometryPolygon": "Polygon",
+    "esriGeometryEnvelope": "Polygon",
+}
+
+_FEATURE_RE = re.compile(r'"type"\s*:\s*"Feature"')
+_GEOM_TYPE_RE = re.compile(r'"geometry"\s*:\s*\{\s*"type"\s*:\s*"([A-Za-z]+)"')
+_FC_MARKER_RE = re.compile(r'"type"\s*:\s*"FeatureCollection"')
+_XML_MEMBER_RE = re.compile(r"<(?:\w+:)?(?:featureMember|member)\b")
+_XML_MATCHED_RE = re.compile(r'number(?:Matched|OfFeatures)\s*=\s*"(\d+)"')
 
 
 @dataclass
@@ -49,6 +65,67 @@ def classify_magic(first_bytes: bytes) -> str:
     if head in (b"{", b"["):
         return "json-text"
     return "unknown"
+
+
+def _shape(kind, count, exact, geometry="", paged=False):
+    # paged: the reply carries service metadata, which is what separates an API from a file.
+    return {"shape": kind, "feature_count": count, "count_is_exact": exact,
+            "geometry_type": geometry, "paged": paged}
+
+
+def _json_shape(doc: dict) -> dict | None:
+    """A fully parsed JSON document - the only path that can report an exact count."""
+    if "error" in doc:  # ArcGIS serves these with HTTP 200
+        return None
+    capped = bool(doc.get("exceededTransferLimit"))
+    if doc.get("type") == "FeatureCollection":
+        feats = doc.get("features") or []
+        matched = doc.get("numberMatched")
+        exact = isinstance(matched, int) and matched >= 0 and not capped
+        geometry = (feats[0].get("geometry") or {}).get("type", "") if feats else ""
+        served = any(k in doc for k in ("numberMatched", "numberReturned", "links"))
+        return _shape("geojson_featurecollection", matched if exact else len(feats),
+                      exact, geometry, served or capped)
+    if "geometryType" in doc and "features" in doc:
+        feats = doc.get("features") or []
+        total = doc.get("count")
+        exact = isinstance(total, int) and not capped
+        return _shape("esrijson_featureset", total if exact else len(feats), exact,
+                      _ESRI_GEOMETRY.get(doc.get("geometryType", ""), ""), True)
+    return None
+
+
+def _text_shape(text: str) -> dict | None:
+    """A truncated or XML body - features are countable, a total usually is not."""
+    if _FC_MARKER_RE.search(text):
+        geometry = _GEOM_TYPE_RE.search(text)
+        # Cut mid-document, so the count is a lower bound and the tail metadata is gone.
+        return _shape("geojson_featurecollection", len(_FEATURE_RE.findall(text)), False,
+                      geometry.group(1) if geometry else "", "numberReturned" in text)
+    if "WFS_Capabilities" in text:  # metadata, not data - 0 features is the honest answer
+        return _shape("wfs_capabilities", 0, True, paged=True)
+    if re.search(r"<(?:\w+:)?FeatureCollection\b", text):
+        matched = _XML_MATCHED_RE.search(text)
+        return _shape("wfs_featurecollection",
+                      int(matched.group(1)) if matched else len(_XML_MEMBER_RE.findall(text)),
+                      bool(matched), paged=True)
+    return None
+
+
+def classify_api_shape(body: bytes, content_type: str = "") -> dict | None:
+    """Identify a feature service from the STRUCTURE of its reply, never from its host."""
+    if "html" in content_type.lower():
+        return None
+    text = body.decode("utf-8", "replace").lstrip()
+    if text[:1] in ("{", "["):
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError:
+            return _text_shape(text)  # cut mid-document: count what is visible
+        return _json_shape(doc) if isinstance(doc, dict) else None
+    if text[:1] == "<":
+        return _text_shape(text)
+    return None
 
 
 def default_transport(method: str, url: str, headers: dict, max_bytes: int) -> HttpResult:
@@ -293,18 +370,39 @@ class WebTools:
         elif r.status == 200 and r.headers.get("content-length", "").isdigit():
             total = int(r.headers["content-length"])
         payload = classify_magic(r.body)
+        ctype = r.headers.get("content-type", "")
         ok = r.status in (200, 206) and payload not in ("xml/html-text", "unknown")
-        return {
+        out = {
             "url": url,
             "ok": ok,
             "status": r.status,
-            "content_type": r.headers.get("content-type", ""),
+            "content_type": ctype,
             "total_size_bytes": total,
             "payload_type": payload,
             "first_bytes_hex": r.body[:8].hex(),
+            "access": "file",
             "note": (
                 "looks like a text/error page, not a data file"
                 if payload == "xml/html-text"
                 else ""
             ),
         }
+        if payload in ("json-text", "xml/html-text") and r.status in (200, 206):
+            out.update(self._probe_service(url, ctype))
+        return out
+
+    def _probe_service(self, url: str, content_type: str) -> dict:
+        """16 bytes cannot tell a feature service from an error page - read enough to parse."""
+        self._guard()
+        r = self.transport("GET", url, {"User-Agent": "beegent-geofetch/1.0"},
+                           config.PROBE_TEXT_BYTES)
+        if r.error:
+            return {}
+        shape = classify_api_shape(r.body, content_type)
+        if not shape:
+            return {"ok": False,
+                    "note": "text payload, but not a recognisable feature collection"}
+        api = shape.pop("paged")
+        # A page's content-length is not the dataset's size, and must not read like it.
+        return {**shape, "ok": True, "note": "", "access": "api" if api else "file",
+                **({"total_size_bytes": None} if api else {})}

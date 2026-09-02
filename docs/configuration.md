@@ -97,6 +97,7 @@ These control what enters the conversation, which is what drives token cost — 
 | `MAX_TEXT_CHARS` | `2000` | Extracted HTML text kept per page |
 | `MAX_LINKS` | `80` | Links reported per page |
 | `MAX_URLS_FOUND` | `60` | Entries in `urls_found` |
+| `PROBE_TEXT_BYTES` | `65536` | Second read when a probed payload is JSON/XML, so a feature service can be parsed rather than guessed from its first byte |
 
 ### Network and retries
 
