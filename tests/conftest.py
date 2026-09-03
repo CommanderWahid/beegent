@@ -67,6 +67,17 @@ OAPIF_NO_COUNT_JSON = ('{"type":"FeatureCollection","features":['
 OAPIF_EMPTY_JSON = ('{"type":"FeatureCollection","features":[],'
                     '"numberReturned":0,"numberMatched":0}')
 
+# Real boundary polygons dwarf PROBE_TEXT_BYTES, so the tail metadata is never reached.
+# "links" is the one service marker OGC API-Features puts BEFORE the features array.
+OAPIF_HUGE = f"{FEED}/collections/big/items"
+OAPIF_HUGE_JSON = ('{"type":"FeatureCollection",'
+                   '"links":[{"rel":"self","href":"' + OAPIF_HUGE + '"}],'
+                   '"features":['
+                   + ",".join('{"type":"Feature","geometry":{"type":"MultiPolygon",'
+                              '"coordinates":[[[%s]]]},"properties":{}}' % ("[1.0,2.0]," * 400)
+                              for _ in range(6))
+                   + '],"numberReturned":6}')
+
 # Served with HTTP 200 - the case a leading "{" used to wave through.
 API_ERROR_JSON = '{"error":{"code":400,"message":"Invalid where clause","details":[]}}'
 
@@ -110,6 +121,7 @@ DEFAULT_PAGES = {
     OAPIF_ITEMS: (200, "application/geo+json", OAPIF_JSON),
     OAPIF_NO_COUNT: (200, "application/geo+json", OAPIF_NO_COUNT_JSON),
     OAPIF_EMPTY: (200, "application/geo+json", OAPIF_EMPTY_JSON),
+    OAPIF_HUGE: (200, "application/geo+json", OAPIF_HUGE_JSON),
     API_ERROR_URL: (200, "application/json", API_ERROR_JSON),
     WFS_CAPS_URL: (200, "text/xml", WFS_CAPS_XML),
     ESRI_QUERY_URL: (200, "application/json", ESRI_QUERY_JSON),

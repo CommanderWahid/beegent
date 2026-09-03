@@ -7,7 +7,7 @@ from beegent import config
 from beegent.web_tools import WebTools, classify_magic, summarize_html
 
 from tests.conftest import (API_ERROR_URL, DEFAULT_PAGES, ED_2025, ESRI_QUERY_URL, FEED,
-                            FILE_SIZE, FILE_URL, OAPIF_EMPTY, OAPIF_ITEMS, OAPIF_NO_COUNT,
+                            FILE_SIZE, FILE_URL, OAPIF_EMPTY, OAPIF_HUGE, OAPIF_ITEMS, OAPIF_NO_COUNT,
                             PORTAL, PORTAL_HTML, WFS_CAPS_URL)
 
 # --- magic bytes ---
@@ -223,3 +223,31 @@ def test_a_truncated_document_counts_what_it_can_see(monkeypatch, tools):
     assert probe["shape"] == "geojson_featurecollection"
     assert not probe["count_is_exact"]
     assert probe["feature_count"] < 4212
+
+
+def test_a_truncated_service_is_still_recognised_as_an_api(monkeypatch, tools):
+    """Measured on PDOK: 5 boundary polygons are 379 KB, so the tail metadata is never read.
+
+    numberReturned sits after the features array and is lost, but OGC API-Features puts
+    "links" before it - which is what must decide access.
+    """
+    monkeypatch.setattr(config, "PROBE_TEXT_BYTES", 6_000)
+    probe = tools.probe_url(OAPIF_HUGE)
+    assert probe["shape"] == "geojson_featurecollection"
+    assert probe["access"] == "api", "a cut body must not demote a service to a file"
+    assert probe["feature_count"] > 0
+
+
+def test_a_floor_count_says_so_in_the_note(monkeypatch, tools):
+    """A model reading "1 feature" would reject a national dataset as too small."""
+    monkeypatch.setattr(config, "PROBE_TEXT_BYTES", 6_000)
+    probe = tools.probe_url(OAPIF_HUGE)
+    assert not probe["count_is_exact"]
+    assert "FLOOR" in probe["note"]
+
+
+def test_an_untruncated_service_carries_no_floor_note(tools):
+    """The note must appear only when the read was actually cut short."""
+    probe = tools.probe_url(OAPIF_ITEMS)
+    assert probe["count_is_exact"]
+    assert probe["note"] == ""

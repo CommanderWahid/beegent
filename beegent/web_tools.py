@@ -95,13 +95,19 @@ def _json_shape(doc: dict) -> dict | None:
     return None
 
 
+#: Service metadata that can appear BEFORE the features array, so a cut body still shows it.
+_SERVICE_KEYS = ('"links"', "numberMatched", "numberReturned", "exceededTransferLimit")
+
+
 def _text_shape(text: str) -> dict | None:
     """A truncated or XML body - features are countable, a total usually is not."""
     if _FC_MARKER_RE.search(text):
         geometry = _GEOM_TYPE_RE.search(text)
         # Cut mid-document, so the count is a lower bound and the tail metadata is gone.
+        # "links" is the one service marker OGC API-Features puts at the TOP of the document.
         return _shape("geojson_featurecollection", len(_FEATURE_RE.findall(text)), False,
-                      geometry.group(1) if geometry else "", "numberReturned" in text)
+                      geometry.group(1) if geometry else "",
+                      any(k in text for k in _SERVICE_KEYS))
     if "WFS_Capabilities" in text:  # metadata, not data - 0 features is the honest answer
         return _shape("wfs_capabilities", 0, True, paged=True)
     if re.search(r"<(?:\w+:)?FeatureCollection\b", text):
@@ -403,6 +409,11 @@ class WebTools:
             return {"ok": False,
                     "note": "text payload, but not a recognisable feature collection"}
         api = shape.pop("paged")
+        # Boundary polygons dwarf the read budget, so say when the count is only a floor.
+        cut = len(r.body) >= config.PROBE_TEXT_BYTES and not shape["count_is_exact"]
+        note = (f"only the first {config.PROBE_TEXT_BYTES:,} bytes were read - feature_count "
+                "is a FLOOR, not the dataset size; do not reject this endpoint as too small"
+                ) if cut else ""
         # A page's content-length is not the dataset's size, and must not read like it.
-        return {**shape, "ok": True, "note": "", "access": "api" if api else "file",
+        return {**shape, "ok": True, "note": note, "access": "api" if api else "file",
                 **({"total_size_bytes": None} if api else {})}
