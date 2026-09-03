@@ -68,3 +68,22 @@ def test_no_answer_yields_no_angles_rather_than_raising(monkeypatch):
     """chat_json returning None means 'no answer', never a negative answer."""
     monkeypatch.setattr(planner, "chat_json", lambda role, messages: (None, TokenUsage()))
     assert plan("France", "buildings") == []
+
+
+def test_the_prompt_treats_a_delivery_channel_as_not_a_format():
+    """A use case naming an API/WFS names a CHANNEL; inventing a format filters out the data.
+
+    Observed: a run that asked for "an OGC API-Features or WFS endpoint" had GeoJSON invented
+    for it, which then rejected a verified 632 MB national boundary file for being GML.
+    """
+    assert "DELIVERY CHANNEL" in planner.SYSTEM
+    assert "Naming a channel is not naming a format" in planner.SYSTEM
+    # The narrow reading is the whole risk control: a named format must still win.
+    assert "and no format" in planner.SYSTEM
+    assert "If the use case named one, use exactly that" in planner.SYSTEM
+
+
+def test_an_explicitly_empty_format_survives_planning(monkeypatch):
+    """The invariant the channel rule depends on - "" must not be substituted downstream."""
+    got = run_plan(monkeypatch, [angle(format="")])
+    assert got[0].format == "", "an empty format disarms the magic-byte check; keep it empty"

@@ -62,11 +62,16 @@ job is to produce those four - it cannot rediscover them:
   "dataset" - the file in plain words, including its geographic extent, e.g.
               "building footprints, whole country" or "level-2 administrative boundaries".
   "format"  - the file format to ask for. If the use case named one, use exactly that on
-              every angle - see above, it overrides everything in this paragraph. Only
-              when the use case is silent do you choose: prefer, in this order,
-              GeoParquet, GeoPackage, Shapefile, GeoJSON, CSV, picking what this
-              publisher plausibly offers rather than always the first. Leave it empty
-              only if the format genuinely does not matter. Never ask for a
+              every angle - see above, it overrides everything in this paragraph.
+              If instead it names a DELIVERY CHANNEL and no format - "an API", "WFS",
+              "OGC API-Features", "an endpoint", "a service" - leave this EMPTY: a
+              service serves whichever format you ask it for, so pinning one filters
+              out the publisher's actual distribution.
+              Naming a channel is not naming a format.
+              Only when the use case names NEITHER do you choose: prefer, in this
+              order, GeoParquet, GeoPackage, Shapefile, GeoJSON, CSV, picking what
+              this publisher plausibly offers rather than always the first. Leave it
+              empty only if the format genuinely does not matter. Never ask for a
               documentation format (PDF, TXT, MD) - those are not data.
   "vintage" - "latest" unless the use case names a specific year/edition.
 
