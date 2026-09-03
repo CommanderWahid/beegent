@@ -90,6 +90,9 @@ reach the output; the worst case is an honest failure** recorded under `unresolv
 ## When the agent gets stuck
 
 - **Repeated calls.** After `GEOFETCH_MAX_REPEATS` the angle is abandoned.
+- **Budget exhausted.** When `GEOFETCH_MAX_HTTP_REQUESTS` is spent the angle stops immediately —
+  every further tool call would only error, so no more LLM calls are made. Verifying a download
+  needs a probe, so an angle that reaches this point cannot report a result.
 - **Context pressure.** Old tool results are trimmed in place every turn so the system prompt and
   the task survive on small local context windows.
 - **Malformed tool calls.** Some models stop emitting native tool calls in long conversations and

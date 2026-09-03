@@ -674,3 +674,25 @@ def test_the_prompt_asks_for_native_script_search_without_naming_a_language():
     assert "own script" in SYSTEM_PROMPT
     for instance in ("telechargement", "descarga"):
         assert instance not in SYSTEM_PROMPT, f"{instance!r} teaches an instance, not a method"
+
+
+# --- an exhausted HTTP budget must end the angle, not be fed back as information ---
+
+
+def test_an_exhausted_budget_ends_the_angle_without_another_llm_call(run_agent, tools):
+    """A live run spent ~5 steps and ~50k tokens on calls that could not run."""
+    tools.requests_made = tools.max_requests
+    res, llm = run_agent(list(HAPPY_PATH), tools=tools)
+    assert not res.found
+    assert "budget" in res.report["failure_reason"]
+    assert llm.chat_calls == 0, "no LLM call may be spent once no tool call can succeed"
+
+
+def test_a_report_with_an_exhausted_budget_is_rejected_not_raised(tools):
+    """_handle_report probes directly, so its failure used to escape run() and lose the angle."""
+    tools.requests_made = tools.max_requests
+    agent = GeofetchAgent(tools=tools)
+    agent._task_format, agent._task_json = "GeoParquet", "{}"
+    agent._discovered = {FILE_URL}
+    assert agent._handle_report({"found": True, "download_url": FILE_URL}) is None
+    assert "could not re-probe" in agent._reject_reason

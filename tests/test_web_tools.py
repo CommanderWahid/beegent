@@ -251,3 +251,47 @@ def test_an_untruncated_service_carries_no_floor_note(tools):
     probe = tools.probe_url(OAPIF_ITEMS)
     assert probe["count_is_exact"]
     assert probe["note"] == ""
+
+
+# --- budget accounting: a refused call is not a request that was made ---
+
+
+def test_the_request_counter_stops_at_the_cap(tools):
+    """It used to overshoot - a live run reported 55 requests against a cap of 50."""
+    tools.max_requests = 2
+    tools.fetch_page(PORTAL)
+    tools.fetch_page(FEED)
+    with pytest.raises(RuntimeError):
+        tools.fetch_page(ED_2025)
+    assert tools.requests_made == 2, "the refused call must not be counted as spent"
+    assert tools.budget_spent
+
+
+# --- the agent explores with fetch_page, so it must see a service here too ---
+
+
+def test_fetch_page_reports_a_feature_service(tools):
+    page = tools.fetch_page(OAPIF_ITEMS)
+    assert page["features"]["shape"] == "geojson_featurecollection"
+    assert page["features"]["feature_count"] == 4212
+    assert page["features"]["access"] == "api"
+
+
+def test_fetch_page_adds_no_features_key_to_ordinary_documents(tools):
+    """Atom and HTML match none of the three payload families - the no-regression check."""
+    for url in (PORTAL, FEED, ED_2025):
+        assert "features" not in tools.fetch_page(url), url
+
+
+def test_fetch_page_flags_a_floor_count(monkeypatch, tools):
+    """fetch_page reads less than the probe does, so its counts are floors far more often."""
+    monkeypatch.setattr(config, "MAX_BODY_BYTES", 6_000)
+    page = tools.fetch_page(OAPIF_HUGE)
+    assert page["truncated"]
+    assert page["features"]["access"] == "api"
+    assert not page["features"]["count_is_exact"]
+    assert "FLOOR" in page["features"]["note"]
+
+
+def test_an_untruncated_fetch_carries_no_floor_note(tools):
+    assert "note" not in tools.fetch_page(OAPIF_ITEMS)["features"]

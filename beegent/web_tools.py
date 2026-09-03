@@ -238,10 +238,16 @@ class WebTools:
         self.requests_made = 0
         self.log = log
 
+    @property
+    def budget_spent(self) -> bool:
+        """True once no further call can run - every one of them would only raise."""
+        return self.requests_made >= self.max_requests
+
     def _guard(self):
-        self.requests_made += 1
-        if self.requests_made > self.max_requests:
+        # Count only what ran: a refused call is not a request that was made.
+        if self.budget_spent:
             raise RuntimeError("HTTP request budget exhausted")
+        self.requests_made += 1
 
     def fetch_page(self, url: str, accept: str = "") -> dict:
         """Fetch a URL as text+links for HTML, or a truncated raw body for XML/JSON."""
@@ -270,6 +276,15 @@ class WebTools:
             out.update(summarize_html(r.body, r.final_url))
         else:
             out["body"] = r.body[: config.MAX_BODY_BYTES].decode("utf-8", errors="replace")
+            # The agent explores with fetch_page, so it must see a feature service here too.
+            shape = classify_api_shape(r.body, ctype)
+            if shape:
+                shape["access"] = "api" if shape.pop("paged") else "file"
+                if out["truncated"] and not shape["count_is_exact"]:
+                    # Same caveat the probe carries: a floor must not read as a size.
+                    shape["note"] = ("body truncated - feature_count is a FLOOR, not the "
+                                     "dataset size; do not reject this endpoint as too small")
+                out["features"] = shape
         # Absolute URLs the anchors do NOT already carry - prose, XML metadata, JS bundles.
         seen = {link["href"] for link in out.get("links", [])}
         seen.add(url)

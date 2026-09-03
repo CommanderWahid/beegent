@@ -213,6 +213,16 @@ class GeofetchAgent:
         result = AgentResult(found=False)
 
         for step in range(1, self.max_steps + 1):
+            if self.tools.budget_spent:
+                # Every remaining tool call would only error, so more LLM calls buy nothing.
+                self.log(f"[step {step}] stopped: HTTP request budget exhausted")
+                result.report = {
+                    "found": False,
+                    "failure_reason": f"HTTP request budget "
+                                      f"({self.tools.max_requests}) exhausted before a "
+                                      "download could be verified",
+                }
+                return result
             result.steps_used = step
             _compact_history(messages)
             try:
@@ -351,7 +361,13 @@ class GeofetchAgent:
                 "you invented it. Only report URLs you actually discovered (fetch or "
                 "probe a candidate first).")
             return None
-        probe = self.tools.probe_url(url)
+        try:
+            probe = self.tools.probe_url(url)
+        except Exception as exc:  # run() must never raise - this probe is not via _dispatch
+            self._last_probe = {}
+            self._reject_reason = (f"REPORT REJECTED: could not re-probe download_url "
+                                   f"({type(exc).__name__}: {exc}).")
+            return None
         self._last_probe = probe
         status_ok = probe.get("status") in (200, 206)
         payload = probe.get("payload_type", "unknown")
