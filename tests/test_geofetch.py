@@ -696,3 +696,10 @@ def test_a_report_with_an_exhausted_budget_is_rejected_not_raised(tools):
     agent._discovered = {FILE_URL}
     assert agent._handle_report({"found": True, "download_url": FILE_URL}) is None
     assert "could not re-probe" in agent._reject_reason
+
+
+def test_a_candidate_carries_the_angles_dataset(run_stage):
+    """The catalog matches on this text, and `title` would drag in publisher and channel."""
+    found, _ = run_stage(list(HAPPY_PATH))
+    assert found.dataset == ANGLE.dataset
+    assert found.title == ANGLE.description, "title is unchanged"

@@ -1,44 +1,71 @@
 # Architecture
 
-Beegent runs four stages in a loop. <br>
-The loop lives in `beegent/run.py:discover()`.<br><br>
+Seven numbered steps, only three of which call an LLM, over a store that remembers what earlier
+runs learned. The loop lives in `beegent/run.py:discover()`.<br><br>
 
 ```mermaid
 flowchart TD
-    IN["python -m beegent.run<br/>--country --use-case"]
-    PLAN["planner · 1 LLM call<br/>use case into 1..3 SearchAngles<br/>each one IS the fetcher's 4 params:<br/>url + dataset + format + vintage"]
-    CAT["catalogs<br/>deliberately an empty stub"]
-    GF["geofetch · once per angle<br/>up to 20 LLM calls, 50 HTTP each"]
-    RANK["_rank() · no LLM<br/>dedupe on resource_url<br/>sort by confidence, cap at 3"]
-    GATE{"escalation gate · no LLM<br/>nothing verified at all?"}
-    CRITIC["critic · 1 LLM call<br/>replan or needs_human_review"]
-    UNRES["unresolved[]<br/>claim.failure_reason + cost"]
+    IN["beegent.run --country --use-case"]
+    CAT["1 · catalogs · no LLM<br/>match stored links, re-probe them now"]
+    FRESH{"2 · fresh enough?"}
+    PLAN["3 · planner · 1 LLM call<br/>1..3 angles: url + dataset + format + vintage"]
+    GF["4 · geofetch · 1 agent per angle<br/>≤20 LLM calls, ≤50 HTTP"]
+    RANK["5 · rank · no LLM<br/>dedupe, sort, cap at 3"]
+    GATE{"6 · gate · no LLM<br/>anything verified?"}
+    CRITIC["7 · critic · 1 LLM call"]
     OUT["candidate_list.json"]
+    STORE[("store · SQLite<br/>runs + links")]
 
-    IN --> PLAN
-    IN --> CAT
-    PLAN -->|SearchAngle| GF
-    CAT --> RANK
-    GF -->|verified Candidate| RANK
-    GF -->|dead end| UNRES
-    RANK --> GATE
-    UNRES --> GATE
+    IN --> CAT --> FRESH
+    FRESH -->|yes · run ends, zero LLM calls| OUT
+    FRESH -->|no| PLAN --> GF --> RANK --> GATE
     GATE -->|pass| OUT
-    GATE -->|escalate| CRITIC
+    GATE -->|nothing verified| CRITIC
     CRITIC -->|replan · max 2 iterations| PLAN
     CRITIC -->|needs_human_review| OUT
+    STORE -.->|links verified before| CAT
+    STORE -.->|what failed before| PLAN
+    STORE -.->|routes already burned| CRITIC
+    OUT -.->|record the run| STORE
 ```
+
+Dead ends are recorded too: an angle that finds nothing becomes an `unresolved` entry carrying the
+reason and the cost, so a route that burned budget is visible rather than silent. A **stale**
+catalog hit is not thrown away either — it joins the pool at step 5 as a floor.
 
 ## The stages
 
-| Stage | Module | LLM calls | Role |
-|---|---|---|---|
-| Planner | `beegent/pipeline/planner.py` | 1 | Turns the use case into 1–`MAX_ANGLES` search angles |
-| Catalogs | `beegent/pipeline/catalogs.py` | 0 | An empty stub; the catalog layer is unbuilt |
-| Geofetch | `beegent/pipeline/geofetch.py` | ≤20 per angle | Chases one angle to a verified file |
-| Rank | `beegent/run.py:_rank()` | 0 | Dedupes, sorts by confidence, caps the list |
-| Gate | `beegent/pipeline/critic.py` | 0 | Decides whether the run needs help |
-| Critic | `beegent/pipeline/critic.py` | ≤1 | Says `replan` or `needs_human_review` |
+| | Stage | Module | LLM calls | Role |
+|---|---|---|---|---|
+| 1 | Catalogs | `beegent/pipeline/catalogs.py` | 0 | Links earlier runs verified, matched by cosine and re-probed now |
+| 2 | Freshness | `beegent/run.py:_fresh()` | 0 | A hit within `CATALOG_FRESH_DAYS` ends the run outright |
+| 3 | Planner | `beegent/pipeline/planner.py` | 1 | Turns the use case into 1–`MAX_ANGLES` search angles |
+| 4 | Geofetch | `beegent/pipeline/geofetch.py` | ≤20 per angle | Chases one angle to a verified file |
+| 5 | Rank | `beegent/run.py:_rank()` | 0 | Dedupes, sorts by confidence, caps the list |
+| 6 | Gate | `beegent/pipeline/critic.py` | 0 | Decides whether the run needs help |
+| 7 | Critic | `beegent/pipeline/critic.py` | ≤1 | Says `replan` or `needs_human_review` |
+
+## The store
+
+`~/.beegent/memory.db`, on by default; `BEEGENT_DB` moves it and `BEEGENT_DB=""` switches it off.
+Two append-only tables, and stdlib `sqlite3` — no server, no extra dependency.
+
+| Table | Holds | Who reads it |
+|---|---|---|
+| `runs` | what was tried, and the critic's verdict | the planner, as `feedback`; the critic, as start URLs earlier runs already burned |
+| `links` | endpoints that were independently verified | the catalog stage |
+
+It closes a loop that used to leak: the critic's `replan` note was computed, used once and dropped,
+so the most actionable thing a run produced reached neither the output file nor the next run.
+
+`candidate_list.json` is unchanged and always written. It is the run's **deliverable**; the database
+is its **memory**. Neither is a fallback for the other.
+
+**A fresh catalog hit ends the run before any LLM call.** A stored link that re-probes at HTTP 206
+is proven *live*, not *current* — `vintage: "latest"` means a 2026 edition says nothing about 2027 —
+so `CATALOG_FRESH_DAYS` (7) draws the line: inside it the catalog answers, outside it the hit is
+kept as a floor and discovery still runs. Measured: a repeated request went from ~90k tokens to
+**0 tokens in 0.7s**.
 
 ## An angle is a fetch order
 
@@ -87,3 +114,4 @@ throttled degrades to a dead-end record carrying its cost, rather than disappear
 ## Where to go next
 
 - [The geofetch agent](geofetch.md) — the stage that does the work
+- [Configuration](configuration.md) — `BEEGENT_DB`, `CATALOG_FRESH_DAYS`, `EMBED_MODEL`

@@ -101,6 +101,8 @@ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 
 No API keys. Search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs
 locally. <br>
+Runs remember each other: a dataset found once is re-probed and returned in under a second, for
+zero tokens ([how](docs/architecture.md#the-store)). <br>
 You can add your backend (connector) or use the provided ones: Groq, Mistral, Databricks: [Backends](docs/backends.md).
 
 Full walkthrough: [Getting started](docs/getting-started.md).
@@ -110,7 +112,8 @@ Full walkthrough: [Getting started](docs/getting-started.md).
 **Working prototype.** It resolves real datasets on live portals, and the verification guarantee
 holds. Known limits, stated plainly:
 
-- The **catalog stage is an empty stub** — the catalog layer is unbuilt yet.
+- **Cross-run memory writes to `~/.beegent/memory.db`** from the first run. It is what lets a
+  repeat request be answered from the catalog, and `BEEGENT_DB=""` disables it.
 - **No JavaScript execution.** The agent routes *around* a JS app shell rather than through it,
   looking for the machine-readable service behind it ([how](docs/geofetch.md)). What stays out of
   reach is a download URL built by a client-side interaction; that is reported as an honest failure
@@ -127,7 +130,7 @@ Pre-1.0: interfaces may change.
 | [Getting started](docs/getting-started.md) | Install, first run, reading the result |
 | [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
 | [Backends](docs/backends.md) | Ollama, Groq, Mistral, Databricks, writing a connector |
-| [Architecture](docs/architecture.md) | The four stages and how a run flows |
+| [Architecture](docs/architecture.md) | The seven steps, the store, and how a run flows |
 | [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the seven guardrails |
 | [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
 | [Performance](docs/performance.md) | What a run costs and which settings move it |
@@ -138,9 +141,16 @@ The test suite is fully offline — no network, no API key, no LLM — so you ca
 loop without spending a token:
 
 ```bash
-uv run pytest                                       # 210 cases, ~1s
+uv run pytest                                       # 272 cases, ~1s
 uvx ruff check --select F,ERA .
 ```
+
+`tools/` holds two development utilities, neither part of the pipeline:
+
+| | |
+|---|---|
+| `python -m tools.calibrate_relevance ["use case" ...]` | measures `CATALOG_MIN_RELEVANCE` against the links you have stored |
+| `python -m tools.backfill_embeddings` | embeds stored links that have no vector, or one from a different model |
 
 Runs on Python 3.10, 3.11 and 3.12.
 

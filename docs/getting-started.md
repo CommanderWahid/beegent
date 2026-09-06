@@ -65,6 +65,24 @@ that burned budget is visible rather than silent.
 
 See [Output schema](output-schema.md) for every field.
 
+## The second run is cheaper
+
+The first run writes what it learned to `~/.beegent/memory.db` — the endpoints it verified, and the
+critic's advice about what to try instead. Ask for the same thing again and the catalog answers
+directly:
+
+```
+[catalog] 0.596 BAG building (Pand) footprints, whole country
+[catalog] answered from memory - 1 link(s), no LLM call
+```
+
+That takes under a second and costs nothing, and the link is still independently re-probed before
+it is handed back — a stored URL is never trusted on an old promise. After `CATALOG_FRESH_DAYS`
+(7) the link is treated as a starting point again rather than an answer, because a live file is not
+necessarily the current edition.
+
+`BEEGENT_DB` moves the database; `BEEGENT_DB=""` turns the whole thing off.
+
 ## Choosing models
 
 Each stage asks for a *role* — `planner`, `geofetch`, `critic` — and the backend maps it to a

@@ -6,7 +6,7 @@ import os
 from beegent import config, llm
 from beegent.connectors import LLMConnector
 from beegent.run import _rank
-from beegent.schemas import Candidate, SearchAngle, TokenUsage
+from beegent.schemas import Candidate, DiscoveryRun, SearchAngle, TokenUsage
 
 from tests.conftest import FILE_URL, make_candidate
 
@@ -42,8 +42,10 @@ def test_run_py_logs_when_executed_as_main():
     import subprocess
     import sys
 
+    # A fixture cannot reach into a subprocess, so the store is disabled through the env.
     proc = subprocess.run([sys.executable, "-c", SCRIPT % os.devnull],
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "BEEGENT_DB": ""})
     out = proc.stdout + proc.stderr
     assert "[input]" in out, "run.py's own logging must reach the terminal"
     assert "[config]" in out
@@ -257,3 +259,221 @@ def test_meter_does_not_leak_between_runs(monkeypatch, reset_llm_usage):
     first = runmod.discover("Atlantis", "land cover")
     second = runmod.discover("Atlantis", "land cover")
     assert first.totals["by_role"]["planner"] == second.totals["by_role"]["planner"]
+
+
+# --- cross-run memory: nothing a run learns may vanish with it ---
+
+
+def _store(tmp_path):
+    from beegent.store import SqliteStore
+    return SqliteStore(str(tmp_path / "m.db"))
+
+
+def test_a_run_is_recorded_on_the_early_ok_exit(monkeypatch, tmp_path, reset_llm_usage):
+    """The common path. Four exits route through _finalize(); each must persist."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    store = _store(tmp_path)
+    run = runmod.discover("Atlantis", "land cover", store=store)
+
+    assert run.status == "ok"
+    assert len(store.prior_runs("Atlantis", 5)) == 1
+    assert len(store.verified_links("Atlantis")) == 1
+
+
+def test_the_critic_note_is_recorded_not_just_consumed(monkeypatch, tmp_path, reset_llm_usage):
+    """A replan note used to be assigned to `feedback` and dropped - never stored anywhere."""
+    from beegent import run as runmod
+
+    _install(monkeypatch, critic_decision="needs_human_review")
+    dead = Candidate(url="https://x.example/p", title="T", source="geofetch",
+                     claim={"failure_reason": "nothing"}, cost={"total_tokens": 10})
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    store = _store(tmp_path)
+    run = runmod.discover("Atlantis", "land cover", store=store)
+
+    assert run.critic_note == "n", "the verdict must reach the run object"
+    assert store.prior_runs("Atlantis", 5)[0]["critic_note"] == "n"
+
+
+def test_tried_accumulates_across_iterations(monkeypatch, tmp_path, reset_llm_usage):
+    """run.unresolved is REPLACED each iteration, so collecting only at the end loses one."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)  # replan -> two iterations
+    seen = []
+
+    def fake_resolve(angle):
+        seen.append(1)
+        return None, Candidate(url=f"https://x.example/{len(seen)}", title="T",
+                               source="geofetch", claim={"failure_reason": "dead"},
+                               cost={"total_tokens": 10})
+
+    monkeypatch.setattr(runmod, "resolve_angle", fake_resolve)
+    store = _store(tmp_path)
+    runmod.discover("Atlantis", "land cover", store=store)
+
+    tried = store.prior_runs("Atlantis", 5)[0]["tried"]
+    assert len(tried) == 2, "iteration 1's dead end must survive iteration 2"
+
+
+def test_prior_advice_reaches_the_planner_as_feedback(monkeypatch, tmp_path, reset_llm_usage):
+    """The whole point: run N+1 starts knowing what run N found dead."""
+    from beegent import run as runmod
+
+    store = _store(tmp_path)
+    store.record_run(
+        DiscoveryRun(country="Atlantis", use_case="land cover", critic_note="try the bulk server"),
+        [{"url": "https://dead.example/", "failure_reason": "unreachable"}])
+
+    _install(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(runmod, "plan", lambda c, u, f=None: seen.setdefault("feedback", f) and [])
+    runmod.discover("Atlantis", "land cover", store=store)
+
+    assert "try the bulk server" in seen["feedback"]
+    assert "https://dead.example/" in seen["feedback"]
+
+
+def test_a_broken_store_does_not_fail_the_run(monkeypatch, reset_llm_usage):
+    """Memory is a nicety; every stage fails soft and this is no exception."""
+    from beegent import run as runmod
+
+    class Broken:
+        def prior_runs(self, country, limit):
+            return []
+        def record_run(self, run, tried):
+            raise RuntimeError("disk on fire")
+        def verified_links(self, country):
+            return []
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    run = runmod.discover("Atlantis", "land cover", store=Broken())
+    assert run.status == "ok"
+
+
+# --- a fresh catalog hit answers the run outright: no planner, no agent, no tokens ---
+
+
+def _catalog_hit(days_old):
+    from datetime import datetime, timedelta, timezone
+    when = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+    return Candidate(url="https://page.example/p", title="boundaries", dataset="boundaries",
+                     source="catalog", confidence=0.95,
+                     resource_url="https://a.example/f.gpkg",
+                     verification={"ok": True, "status": 206}, verified_at=when)
+
+
+def test_a_fresh_catalog_hit_skips_planning_entirely(monkeypatch, reset_llm_usage):
+    """The waste this exists to remove: rediscovering a link found three days ago."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(3)])
+    monkeypatch.setattr(runmod, "plan", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("the planner must not run for a fresh catalog hit")))
+    run = runmod.discover("Atlantis", "land cover")
+
+    assert run.status == "ok"
+    assert len(run.candidates) == 1
+    assert run.totals["total_tokens"] == 0, "a cached answer costs no LLM call"
+
+
+def test_a_stale_catalog_hit_still_discovers(monkeypatch, reset_llm_usage):
+    """Live is not current: an old link is a floor, not an answer."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(400)])
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    planned = []
+    real_plan = runmod.plan
+    monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
+    runmod.discover("Atlantis", "land cover")
+    assert planned, "a stale hit must not short-circuit"
+
+
+def test_the_window_can_be_switched_off(monkeypatch, reset_llm_usage):
+    """CATALOG_FRESH_DAYS = 0 is the escape hatch."""
+    from beegent import run as runmod
+
+    monkeypatch.setattr(config, "CATALOG_FRESH_DAYS", 0)
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(0)])
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    planned = []
+    real_plan = runmod.plan
+    monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
+    runmod.discover("Atlantis", "land cover")
+    assert planned
+
+
+def test_a_hit_without_a_timestamp_never_short_circuits(monkeypatch, reset_llm_usage):
+    from beegent import run as runmod
+
+    hit = _catalog_hit(1)
+    hit.verified_at = ""
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [hit])
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    planned = []
+    real_plan = runmod.plan
+    monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
+    runmod.discover("Atlantis", "land cover")
+    assert planned
+
+
+def test_a_cached_answer_is_not_recorded_as_a_new_discovery(monkeypatch, tmp_path,
+                                                            reset_llm_usage):
+    """Re-recording it would reset last_verified, and the freshness window would never expire."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(1)])
+    store = _store(tmp_path)
+    runmod.discover("Atlantis", "land cover", store=store)
+
+    assert len(store.prior_runs("Atlantis", 5)) == 1, "the run itself is still recorded"
+    assert store.verified_links("Atlantis") == [], "but the cache hit is not a new link"
+
+
+def test_the_critic_sees_routes_earlier_RUNS_already_burned(monkeypatch, tmp_path,
+                                                            reset_llm_usage):
+    """It recommended the same publisher three Japan runs running, because it could not see them."""
+    from beegent import run as runmod
+
+    store = _store(tmp_path)
+    store.record_run(DiscoveryRun(country="Atlantis", use_case="land cover"),
+                     [{"url": "https://burned.example/last-time", "failure_reason": "dead"}])
+
+    _install(monkeypatch, critic_decision="needs_human_review")
+    dead = Candidate(url="https://fresh.example/this-time", title="T", source="geofetch",
+                     claim={"failure_reason": "also dead"}, cost={"total_tokens": 10})
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    seen = {}
+    monkeypatch.setattr(runmod, "run_critic",
+                        lambda *a: seen.setdefault("before", a[6]) and None
+                        or {"decision": "needs_human_review", "note": "n"})
+    runmod.discover("Atlantis", "land cover", store=store)
+
+    assert seen["before"][0] == "https://fresh.example/this-time", "this run comes first"
+    assert "https://burned.example/last-time" in seen["before"], "and the earlier run is there too"
+
+
+def test_an_empty_store_passes_only_this_runs_urls(monkeypatch, reset_llm_usage):
+    from beegent import run as runmod
+
+    _install(monkeypatch, critic_decision="needs_human_review")
+    dead = Candidate(url="https://only.example/now", title="T", source="geofetch",
+                     claim={"failure_reason": "dead"}, cost={"total_tokens": 10})
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    seen = {}
+    monkeypatch.setattr(runmod, "run_critic",
+                        lambda *a: seen.setdefault("before", a[6]) and None
+                        or {"decision": "needs_human_review", "note": "n"})
+    runmod.discover("Atlantis", "land cover")
+
+    assert seen["before"] == ["https://only.example/now"]

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from beegent import llm
+from beegent import config, llm
 from beegent.pipeline.geofetch import GeofetchAgent, resolve_angle
 from beegent.schemas import Candidate, SearchAngle, TokenUsage
 from beegent.web_tools import HttpResult, WebTools
@@ -219,6 +219,19 @@ ANGLE = SearchAngle(
 
 
 # --- fixtures ---
+
+
+@pytest.fixture(autouse=True)
+def _no_real_store():
+    """Never touch the developer's own memory.db, and never load an embedding model.
+
+    Deliberately NOT monkeypatch: requesting it here would pull it earlier in setup and so
+    later in teardown, and test_config's reload would then run before its env is restored.
+    """
+    old = config.BEEGENT_DB
+    config.BEEGENT_DB = ""
+    yield
+    config.BEEGENT_DB = old
 
 
 @pytest.fixture

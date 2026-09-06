@@ -9,6 +9,10 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+# Local catalog matching. Optional: without it links are stored with NULL vectors.
+embeddings = ["fastembed>=0.4"]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

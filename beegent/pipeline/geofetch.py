@@ -604,6 +604,7 @@ def resolve_angle(
         return None, Candidate(
             url=start_url,
             title=angle.description or angle.url,
+            dataset=dataset,
             source="geofetch",
             confidence=None,
             resource_url=None,
@@ -615,6 +616,7 @@ def resolve_angle(
         Candidate(
             url=start_url,  # the page we cite; resource_url is the endpoint that serves data
             title=angle.description or angle.url,  # the edition lives in claim.edition
+            dataset=dataset,
             source="geofetch",
             confidence=config.CONFIDENCE_BY_REPORT.get(
                 str(report.get("confidence", "")).lower(), config.CONFIDENCE_DEFAULT

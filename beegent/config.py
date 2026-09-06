@@ -3,6 +3,12 @@
 import os
 
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # key into connectors.CONNECTORS
+# Cross-run memory, on by default. Expanded HERE so a "~" set in .env - where no shell
+# expansion happens - does not become a literal "~" directory. Set empty to disable.
+BEEGENT_DB = os.path.expanduser(os.environ.get("BEEGENT_DB", "~/.beegent/memory.db"))
+# Catalog matching model. Empty disables embeddings entirely; vectors are only ever
+# comparable within one model, so the name is stored beside every vector.
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 
 def _int(name: str, default: int) -> int:
@@ -22,6 +28,11 @@ def _int(name: str, default: int) -> int:
 # --- pipeline tunables -------------------------------------------------------
 
 MAX_ANGLES = _int("MAX_ANGLES", 3)  # main cost lever: every angle is a full agent run
+MAX_CATALOG_PROBES = _int("MAX_CATALOG_PROBES", 3)  # stored links re-probed per run
+# Within this, a stored link answers the run outright and no LLM is called at all.
+# It is the ONLY thing forcing periodic rediscovery, so 0 disables the short-circuit.
+CATALOG_FRESH_DAYS = _int("CATALOG_FRESH_DAYS", 7)
+MEMORY_RUNS = _int("MEMORY_RUNS", 3)  # past runs replayed to the planner, when a store exists
 MAX_ITERATIONS = _int("MAX_ITERATIONS", 2)  # hard cap on planner attempts (critic re-plans)
 
 # --- geofetch agent (beegent/pipeline/geofetch.py) ---------------------------
@@ -48,6 +59,11 @@ PROBE_TEXT_BYTES = _int("PROBE_TEXT_BYTES", 65_536)  # second read when the payl
 
 # Verified beats self-assessed, so even a "low" self-report outranks anything unverified.
 # Not overridable: a dict and its float default, with no per-run reason to retune them.
+# Cosine a stored dataset must reach to be offered. MEASURED, not guessed - see
+# tools/calibrate_relevance.py, and re-measure whenever EMBED_MODEL changes. Not
+# overridable: a float, which _int() neither handles nor needs.
+CATALOG_MIN_RELEVANCE = 0.30
+
 CONFIDENCE_BY_REPORT = {"high": 0.95, "medium": 0.8, "low": 0.7}
 CONFIDENCE_DEFAULT = 0.7
 

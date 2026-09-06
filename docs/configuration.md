@@ -62,6 +62,13 @@ variable of the same name**, with the same precedence as the model variables —
 `MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value that is
 not a positive integer fails at startup rather than silently falling back.
 
+`CATALOG_MIN_RELEVANCE` (`0.30`) is the cosine a stored dataset must reach to be offered — measured
+with `tools/calibrate_relevance.py`, and re-measure it whenever `EMBED_MODEL` changes.
+
+Changing `EMBED_MODEL` also invalidates every vector already stored: they are excluded from matching
+rather than compared, so the catalog goes quiet until you run
+`uv run python -m tools.backfill_embeddings`.
+
 Three settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
 GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`.
 
@@ -70,6 +77,11 @@ GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `C
 | Setting | Default | Effect |
 |---|---|---|
 | `MAX_ANGLES` | `3` | Angles per iteration. **The main cost lever** — each angle is a full agent run |
+| `EMBED_MODEL` | `all-MiniLM-L6-v2` | Catalog matching model. Empty disables embeddings. Changing it invalidates every stored vector |
+| `BEEGENT_DB` | `~/.beegent/memory.db` | Cross-run memory. On by default; `""` disables it. `~` is expanded, so it works from `.env` too |
+| `CATALOG_FRESH_DAYS` | `7` | A stored link newer than this answers the run outright — no planner, no agent. `0` disables it |
+| `MAX_CATALOG_PROBES` | `3` | Stored links re-probed per run before any angle starts |
+| `MEMORY_RUNS` | `3` | Past runs for the same country replayed to the planner, when a store is configured |
 | `MAX_ITERATIONS` | `2` | How many times the critic may send the run back to the planner |
 | `MAX_FINAL_CANDIDATES` | `3` | Cap on the candidate list |
 
@@ -117,3 +129,15 @@ Watch `LLM_TIMEOUT` and `LLM_MAX_RETRIES` together: the worst case for a single 
 |---|---|---|
 | `CONFIDENCE_BY_REPORT` | `{high: 0.95, medium: 0.8, low: 0.7}` | Maps the model's self-assessment |
 | `CONFIDENCE_DEFAULT` | `0.7` | Used when the self-assessment is unrecognised |
+
+## Development tools
+
+Two scripts in `tools/`, neither part of the pipeline:
+
+| Command | What it does |
+|---|---|
+| `python -m tools.calibrate_relevance ["use case" ...]` | Scores your stored links against each query, prints the band the data implies, and suggests `CATALOG_MIN_RELEVANCE`. Re-run it whenever `EMBED_MODEL` changes |
+| `python -m tools.backfill_embeddings` | Embeds stored links with no vector, or one from a different model. Required after an `EMBED_MODEL` change, or the catalog goes quiet |
+
+`calibrate_relevance` exits non-zero when no single threshold satisfies every query, printing the
+conflicting bands rather than averaging them into a number that works for neither.

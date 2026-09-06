@@ -13,6 +13,11 @@ Every number here was measured on a real run.
 Know this number before pointing Beegent at a paid endpoint. Real runs land far below the ceiling,
 but do not budget on that.
 
+**A repeated request costs nothing.** When the catalog holds a link verified within
+`CATALOG_FRESH_DAYS`, the run ends before the planner is called: measured at **0 tokens in 0.7s**,
+against ~90,000 for the same request discovered from scratch. The link is still re-probed, so the
+saving is in LLM calls, not in verification.
+
 A measured full run: **177,629 tokens** (139,161 in / 38,468 out) across 5 angles and 28 HTTP
 requests. A single angle that resolves cleanly costs about **12,900 tokens** over 5 steps.
 

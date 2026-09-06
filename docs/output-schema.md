@@ -14,11 +14,17 @@ A run writes `candidate_list.json` (change the path with `--out`).
   "candidates": [ "..." ],
   "unresolved": [ "..." ],
   "status": "ok",
-  "reason": null
+  "reason": null,
+  "critic_decision": null,
+  "critic_note": null
 }
 ```
 
 `status` is `ok` or `needs_human_review`; `reason` explains the latter.
+
+`critic_decision` and `critic_note` carry the critic's verdict when it ran, and are `null` when the
+escalation gate passed and it never did. A `replan` note used to be consumed in memory and dropped,
+so the most actionable thing a run produced appeared nowhere in its own output.
 
 ## A candidate
 
@@ -26,6 +32,7 @@ A run writes `candidate_list.json` (change the path with `--out`).
 {
   "url": "https://cartes.gouv.fr/rechercher-une-donnee/dataset/IGNF_BD-TOPO",
   "title": "national mapping agency building footprints",
+  "dataset": "building footprints, whole country",
   "source": "geofetch",
   "confidence": 0.95,
   "resource_url": "https://data.geopf.fr/telechargement/download/.../batiment.parquet",
@@ -66,6 +73,13 @@ Two different things:
 
 `resource_url: null` never means "not checked". It means no fetchable endpoint could be verified —
 and in that case the entry is under `unresolved`, not `candidates`.
+
+`dataset` is the angle's dataset spec, copied by the harness. `title` is the angle *description*,
+which also names a publisher and a channel — the catalog matches on `dataset` for that reason.
+
+`source` is `geofetch` for something discovered by this run, and `catalog` for a link an earlier run
+verified. A `catalog` candidate carries `verified_at`, the date it was **originally discovered** —
+not when it was last probed, since its `verification` block is always from the current run.
 
 ### `claim` vs `verification` — who wrote it
 

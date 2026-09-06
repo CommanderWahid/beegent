@@ -46,3 +46,15 @@ def test_below_one_fails_at_import(monkeypatch):
 def test_probe_bytes_is_not_overridable(monkeypatch):
     """16 is a correctness floor - the geopackage magic signature is 16 bytes."""
     assert _reload(monkeypatch, PROBE_BYTES="8").PROBE_BYTES == 16
+
+
+def test_the_store_path_is_expanded_at_import(monkeypatch):
+    """A "~" set in .env gets no shell expansion, and would become a literal directory."""
+    cfg = _reload(monkeypatch, BEEGENT_DB="~/somewhere/memory.db")
+    assert not cfg.BEEGENT_DB.startswith("~")
+    assert cfg.BEEGENT_DB.endswith("/somewhere/memory.db")
+
+
+def test_the_store_has_a_default_path(clean_env):
+    """Unset means on, not off - the feature is no longer dark unless you know a variable."""
+    assert importlib.reload(config).BEEGENT_DB.endswith(".beegent/memory.db")

@@ -135,3 +135,14 @@ chat methods.
 
 Web search is independent of the LLM backend and needs no key: a DuckDuckGo HTML → DuckDuckGo Lite
 → Bing fallback chain.
+
+## Neither do embeddings
+
+Catalog matching uses a local ONNX model through the optional `fastembed` extra, so it needs no
+API, no key, and nothing from your backend — there is no `embedder` role. Install it with
+`uv sync --extra embeddings`; without it, links are stored with no vector and the catalog simply
+returns nothing.
+
+`EMBED_MODEL` selects the model. Changing it invalidates every vector already stored — they are
+excluded from matching rather than compared — so re-run `python -m tools.backfill_embeddings`
+afterwards, and re-measure `CATALOG_MIN_RELEVANCE` with `python -m tools.calibrate_relevance`.

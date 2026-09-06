@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 from beegent import config
 from beegent.connectors import CONNECTORS, LLMConnector
@@ -18,6 +19,7 @@ from beegent.pipeline import (
     run_critic,
 )
 from beegent.schemas import Candidate, DiscoveryRun, TokenUsage
+from beegent.store import Store, make_store
 from beegent.web_tools import normalize_url
 
 _log = logging.getLogger("beegent.run")
@@ -49,15 +51,46 @@ def _add_role(totals: dict, role: str, usage: TokenUsage) -> None:
     _add_tokens(totals, usage)
 
 
-def _finalize(run: DiscoveryRun) -> DiscoveryRun:
-    """Fold the per-role LLM meter into run.totals, then hand the run back."""
+def _fresh(candidates: list[Candidate]) -> bool:
+    """A stored link answers outright only while it is recent - live is not the same as current."""
+    if not config.CATALOG_FRESH_DAYS:
+        return False
+    now = datetime.now(timezone.utc)
+    for cand in candidates:
+        try:
+            age = (now - datetime.fromisoformat(cand.verified_at)).days
+        except (TypeError, ValueError):
+            return False  # no usable timestamp means no shortcut
+        if age >= config.CATALOG_FRESH_DAYS:
+            return False
+    return True
+
+
+def _prior_advice(prior: list[dict]) -> str:
+    """Past critic notes and dead start URLs, as one feedback string for the planner."""
+    lines = []
+    for rec in prior:
+        if rec.get("critic_note"):
+            lines.append(f"- a previous run was advised: {rec['critic_note']}")
+        for t in rec.get("tried", []):
+            lines.append(f"- already tried and failed: {t['url']} ({t['failure_reason']})")
+    return "\n".join(lines)
+
+
+def _finalize(run: DiscoveryRun, store: Store, tried: list[dict]) -> DiscoveryRun:
+    """Fold the per-role LLM meter into run.totals, persist, then hand the run back."""
     for role, usage in usage_by_role().items():
         _add_role(run.totals, role, usage)
+    try:
+        store.record_run(run, tried)
+    except Exception as exc:  # memory is a nicety; a run must never fail for it
+        _log.info(f"[store] not recorded ({type(exc).__name__}: {exc})")
     return run
 
 
-def discover(country: str, use_case: str) -> DiscoveryRun:
+def discover(country: str, use_case: str, store: Store | None = None) -> DiscoveryRun:
     connector = get_connector()
+    store = store if store is not None else make_store()
     run = DiscoveryRun(
         country=country,
         use_case=use_case,
@@ -72,9 +105,22 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
 
     # Deterministic and query-independent, so run once and seed every planner attempt.
     _log.info("[catalog] querying catalogs")
-    catalog_hits = query_catalogs(country, use_case)
+    catalog_hits = query_catalogs(country, use_case, store,
+                                 embed=getattr(store, "embed", None))
 
-    feedback: str | None = None
+    # What earlier runs learned. Replayed through the channel the critic already uses, so
+    # iteration 1 starts informed instead of rediscovering the same dead ends.
+    prior = store.prior_runs(country, config.MEMORY_RUNS)
+    if prior:
+        _log.info(f"[memory] {len(prior)} previous run(s) for {country}")
+    if catalog_hits and _fresh(catalog_hits):
+        # Nothing to plan: the endpoint was found recently and re-probed a moment ago.
+        _log.info(f"[catalog] answered from memory - {len(catalog_hits)} link(s), no LLM call")
+        run.candidates = _rank(list(catalog_hits))
+        return _finalize(run, store, [])
+
+    feedback: str | None = _prior_advice(prior) or None
+    tried: list[dict] = []  # every angle start URL, ACROSS iterations
     carried: list[Candidate] = []  # survivors from earlier iterations
     for iteration in range(1, config.MAX_ITERATIONS + 1):
         run.iteration = iteration
@@ -102,6 +148,8 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 fresh.append(found)
             elif missed:
                 misses.append(missed)
+                tried.append({"url": missed.url,
+                              "failure_reason": str(missed.claim.get("failure_reason", ""))})
             # Cost rides on whichever slot came back.
             if found or missed:
                 run.totals["angles_run"] += 1
@@ -120,7 +168,7 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
         if not escalate:
             run.status = "ok"
             run.reason = None
-            return _finalize(run)
+            return _finalize(run, store, tried)
 
         _log.info(f"[gate] escalating: {gate_reason}")
         if iteration >= config.MAX_ITERATIONS:
@@ -130,21 +178,28 @@ def discover(country: str, use_case: str) -> DiscoveryRun:
                 f"{gate_reason}; reached max_iterations ({config.MAX_ITERATIONS}) "
                 "without enough signal"
             )
-            return _finalize(run)
+            return _finalize(run, store, tried)
 
+        # Earlier runs too, not just this one: "name a genuinely different route" is
+        # unanswerable when the routes an earlier run already burned are invisible.
+        burned = list(dict.fromkeys([t["url"] for t in tried]
+                                    + [t["url"] for rec in prior for t in rec["tried"]]))
         verdict = run_critic(
-            country, use_case, angles, run.candidates, run.unresolved, gate_reason
+            country, use_case, angles, run.candidates, run.unresolved, gate_reason, burned,
         )
         _log.info(f"[critic] {verdict['decision']}: {verdict['note']}")
+        # Recorded, not just used: this was consumed and dropped, so the run's most
+        # actionable output reached neither the output file nor the next run.
+        run.critic_decision, run.critic_note = verdict["decision"], verdict["note"]
         if verdict["decision"] == "replan":
             feedback = verdict["note"]
             continue
 
         run.status = "needs_human_review"
         run.reason = verdict["note"]
-        return _finalize(run)
+        return _finalize(run, store, tried)
 
-    return _finalize(run)
+    return _finalize(run, store, tried)
 
 
 def main() -> None:

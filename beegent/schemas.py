@@ -29,7 +29,10 @@ class SearchAngle:
     rationale: str
     # These four ARE the fetcher's parameters; an angle missing `url` is dropped.
     url: str = ""  # where to start: a dataset page, bulk file server, or API base
-    dataset: str = ""  # free-text description of the file wanted
+    dataset: str = ""
+    # When this endpoint was DISCOVERED, not when it was last pinged. Set only by the
+    # catalog; a cache hit must never refresh it or the freshness window never expires.
+    verified_at: str = ""  # free-text description of the file wanted
     format: str = ""  # "GeoParquet" | "GeoPackage" | ... | "" = any, which disarms the
     # magic-byte guardrail down to a plain liveness check
     vintage: str = "latest"  # "latest", or a date/year/version
@@ -40,6 +43,12 @@ class Candidate:
     url: str
     title: str
     source: str  # "geofetch" | "catalog:hdx" etc.
+    # The angle's dataset spec, harness-copied. `title` is the angle DESCRIPTION, which also
+    # names a publisher and a channel - noise for matching this against a later request.
+    dataset: str = ""
+    # When this endpoint was DISCOVERED, not when it was last pinged. Set only by the
+    # catalog; a cache hit must never refresh it or the freshness window never expires.
+    verified_at: str = ""
     confidence: float | None = None  # geofetch's claim.confidence band, mapped through
     # The endpoint that serves the data, set only after an independent probe.
     resource_url: str | None = None
@@ -66,6 +75,10 @@ class DiscoveryRun:
     unresolved: list[Candidate] = field(default_factory=list)
     status: str = "ok"  # "ok" | "needs_human_review"
     reason: str | None = None  # populated when status is needs_human_review
+    # The critic's verdict. A "replan" note used to be consumed and dropped, so the most
+    # actionable thing the run produced reached neither the output nor the next run.
+    critic_decision: str | None = None  # "replan" | "needs_human_review"
+    critic_note: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

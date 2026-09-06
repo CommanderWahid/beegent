@@ -49,6 +49,7 @@ def run_critic(
     candidates: list[Candidate],
     unresolved: list[Candidate],
     gate_reason: str,
+    tried_before: list[str] | None = None,
 ) -> dict:
     """Run the critic LLM to decide what to do next."""
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
@@ -67,6 +68,9 @@ def run_critic(
         )
         or "(none recorded)"
     )
+    # Without this the critic cannot satisfy its own "name a genuinely different route" -
+    # it has nothing to be different from, and repeats the same advice run after run.
+    before = "\n".join(f"- {u}" for u in (tried_before or [])) or "(none)"
     failed = ""
     try:
         # Usage discarded - see the note in planner.py:plan().
@@ -80,7 +84,8 @@ def run_critic(
                         f"Country: {country}\nUse case: {use_case}\n\n"
                         f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
                         f"Angles that dead-ended:\n{dead}\n\n"
-                        f"Why this was escalated: {gate_reason}"
+                        f"Start URLs already tried in this run and earlier ones:\n{before}"
+                        f"\n\nWhy this was escalated: {gate_reason}"
                     ),
                 },
             ],
