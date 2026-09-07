@@ -141,16 +141,15 @@ The test suite is fully offline — no network, no API key, no LLM — so you ca
 loop without spending a token:
 
 ```bash
-uv run pytest                                       # 280 cases, ~1s
+uv run pytest                                       # 285 cases, ~1s
 uvx ruff check --select F,ERA .
 ```
 
-`tools/` holds two development utilities, neither part of the pipeline:
+`tools/` holds one development utility, not part of the pipeline:
 
 | | |
 |---|---|
-| `python -m tools.calibrate_relevance ["use case" ...]` | measures `CATALOG_MIN_RELEVANCE` against the links you have stored |
-| `python -m tools.backfill_embeddings` | embeds stored links that have no vector, or one from a different model |
+| `python -m tools.calibrate_relevance ["use case" ...]` | measures the similarity thresholds against the links you have stored — re-run it whenever `EMBED_MODEL` changes |
 
 Runs on Python 3.10, 3.11 and 3.12.
 

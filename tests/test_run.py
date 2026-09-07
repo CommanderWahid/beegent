@@ -477,3 +477,40 @@ def test_an_empty_store_passes_only_this_runs_urls(monkeypatch, reset_llm_usage)
     runmod.discover("Atlantis", "land cover")
 
     assert seen["before"] == ["https://only.example/now"]
+
+
+def test_the_run_repairs_a_model_change_before_reading_any_vector(monkeypatch, tmp_path,
+                                                                  reset_llm_usage):
+    """Order matters: the catalog and prior_runs both read vectors this must have fixed."""
+    from beegent import run as runmod
+
+    order = []
+    store = _store(tmp_path)
+    monkeypatch.setattr(store, "sync_embeddings", lambda: order.append("sync") or {"runs": 2})
+    monkeypatch.setattr(store, "verified_links", lambda c: order.append("catalog") or [])
+    monkeypatch.setattr(store, "prior_runs",
+                        lambda c, n, u="": order.append("memory") or [])
+
+    _install(monkeypatch, critic_decision="needs_human_review")
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    runmod.discover("Atlantis", "land cover", store=store)
+
+    assert order[0] == "sync", "re-embedding runs before anything compares a vector"
+    assert {"catalog", "memory"} <= set(order)
+
+
+def test_a_failed_re_embedding_does_not_cost_the_run(monkeypatch, tmp_path, reset_llm_usage):
+    """Every stage fails soft, and memory is the one that matters least."""
+    from beegent import run as runmod
+
+    store = _store(tmp_path)
+
+    def boom():
+        raise RuntimeError("model file corrupt")
+    monkeypatch.setattr(store, "sync_embeddings", boom)
+
+    _install(monkeypatch, critic_decision="needs_human_review")
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    run = runmod.discover("Atlantis", "land cover", store=store)
+
+    assert run.status == "needs_human_review", "the run still finished and still reported"

@@ -74,9 +74,14 @@ They are separate numbers because they compare different kinds of text, and a si
 be calibrated for neither. Without the second one, a country's most recent runs are replayed
 regardless of what they were about — a boundaries run fed dead URLs from a building-footprints run.
 
-Changing `EMBED_MODEL` also invalidates every vector already stored: they are excluded from matching
-rather than compared, so the catalog goes quiet and run memory falls back to nothing until you run
-`uv run python -m tools.backfill_embeddings`.
+Changing `EMBED_MODEL` also invalidates every vector already stored — they are excluded from
+matching rather than compared. **A run repairs this itself**: it re-embeds whatever the current model
+cannot compare before anything reads a vector, so a model change costs one slower startup rather
+than silently losing the catalog and run memory. An unchanged model finds nothing to do.
+
+What that does *not* fix is the two thresholds: cosines are not comparable across models, so re-run
+`tools/calibrate_relevance.py` after a model change or you are filtering with a number measured for
+something else.
 
 Five settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
 GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`, and
@@ -144,12 +149,11 @@ Watch `LLM_TIMEOUT` and `LLM_MAX_RETRIES` together: the worst case for a single 
 
 ## Development tools
 
-Two scripts in `tools/`, neither part of the pipeline:
+One script in `tools/`, not part of the pipeline:
 
 | Command | What it does |
 |---|---|
 | `python -m tools.calibrate_relevance ["use case" ...]` | Scores your stored links against each query, prints the band the data implies, and suggests `CATALOG_MIN_RELEVANCE`. Re-run it whenever `EMBED_MODEL` changes |
-| `python -m tools.backfill_embeddings` | Embeds stored **runs and links** with no vector, or one from a different model. Required after an `EMBED_MODEL` change, or the catalog goes quiet and run memory stops matching |
 
 `calibrate_relevance` exits non-zero when no single threshold satisfies every query, printing the
 conflicting bands rather than averaging them into a number that works for neither.

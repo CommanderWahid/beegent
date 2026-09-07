@@ -372,3 +372,47 @@ def test_a_backfilled_run_becomes_matchable_again(tmp_path):
 
     assert len(store.prior_runs("Atlantis", 3, "land cover")) == 1
     assert store.runs_needing_embedding("new") == [], "re-running is idempotent"
+
+
+# --- a model change repairs itself at the start of the next run ---
+
+
+def test_a_model_change_re_embeds_both_tables(tmp_path):
+    """Silence is the symptom of a model change, so the run must not depend on remembering a tool."""
+    path = str(tmp_path / "m.db")
+    old = _embedder(AXES, name="old")
+    SqliteStore(path, embed=old).record_run(_run(candidates=[_verified()]), [])
+
+    store = SqliteStore(path, embed=_embedder(AXES | {"land cover, whole country": [1.0, 0.0]},
+                                              name="new"))
+    assert store.prior_runs("Atlantis", 3, "land cover") == [], "unmatchable before the sync"
+    assert store.sync_embeddings() == {"runs": 1, "links": 1}
+    assert len(store.prior_runs("Atlantis", 3, "land cover")) == 1, "matchable again"
+    assert store.sync_embeddings() == {}, "and re-running finds nothing left to do"
+
+
+def test_an_unchanged_model_costs_no_embedding_call(tmp_path):
+    """The common path is 'nothing changed', so it must not re-embed the whole store every run."""
+    calls = []
+
+    def counting(texts):
+        calls.append(len(texts))
+        return [normalise([1.0, 0.0]) for _ in texts]
+    counting.name = "same"
+
+    store = SqliteStore(str(tmp_path / "m.db"), embed=counting)
+    store.record_run(_run(candidates=[_verified()]), [])
+    calls.clear()
+
+    assert store.sync_embeddings() == {}
+    assert calls == [], "no work means no model call at all"
+
+
+def test_with_no_embedder_sync_leaves_every_vector_untouched(tmp_path):
+    """No model is not a reason to discard what is stored - keep the state as it is."""
+    path = str(tmp_path / "m.db")
+    SqliteStore(path, embed=_embedder(AXES, name="old")).record_run(_run(), [])
+
+    assert SqliteStore(path).sync_embeddings() == {}, "no embedder, no work"
+    after = SqliteStore(path, embed=_embedder(AXES, name="old"))
+    assert len(after.prior_runs("Atlantis", 3, "land cover")) == 1, "the old vector survived"

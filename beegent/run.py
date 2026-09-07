@@ -103,6 +103,17 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
     # Module-level, so a second discover() would otherwise inherit the first run's tokens.
     reset_usage()
 
+    # An EMBED_MODEL change invalidates every stored vector at once, and the symptom is
+    # silence: the catalog matches nothing and memory replays nothing, at full token cost.
+    try:
+        synced = store.sync_embeddings()
+    except Exception as exc:  # memory is a nicety; a run must never fail for it
+        _log.info(f"[memory] not re-embedded ({type(exc).__name__}: {exc})")
+        synced = {}
+    if synced:  # silent on the common path, where the model has not changed
+        _log.info(f"[memory] re-embedded {synced.get('runs', 0)} run(s) and "
+                  f"{synced.get('links', 0)} link(s) for the current model")
+
     # Deterministic and query-independent, so run once and seed every planner attempt.
     _log.info("[catalog] querying catalogs")
     catalog_hits = query_catalogs(country, use_case, store,

@@ -15,6 +15,9 @@ from beegent.web_tools import normalize_url
 
 _log = logging.getLogger(__name__)
 
+#: One embedding call per chunk. A model change re-embeds everything, so this is the batch.
+EMBED_BATCH = 256
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
   run_uid         TEXT PRIMARY KEY,
@@ -72,6 +75,8 @@ class Store(Protocol):
 
     def mark_link(self, link_uid: str, status: str) -> None: ...
 
+    def sync_embeddings(self) -> dict: ...
+
 
 class NullStore:
     """The default: no persistence, so the CLI stays standalone and tests stay offline."""
@@ -87,6 +92,9 @@ class NullStore:
 
     def mark_link(self, link_uid: str, status: str) -> None:
         return None
+
+    def sync_embeddings(self) -> dict:
+        return {}
 
 
 class SqliteStore:
@@ -237,6 +245,25 @@ class SqliteStore:
         with self._connect() as db:
             db.execute("UPDATE links SET embedding = ?, embed_model = ? WHERE link_uid = ?",
                        (to_blob(vec), model, link_uid))
+
+    def sync_embeddings(self) -> dict:
+        """Re-embed whatever the CURRENT model cannot compare. No model means no change at all."""
+        model = getattr(self.embed, "name", None) if self.embed else None
+        if not model:
+            return {}  # nothing to compare against: leave every stored vector exactly as it is
+        done = {}
+        for kind, pending, text, uid, write in (
+            ("runs", self.runs_needing_embedding, "use_case", "run_uid", self.set_run_embedding),
+            ("links", self.links_needing_embedding, "dataset", "link_uid", self.set_embedding),
+        ):
+            todo = pending(model)
+            for start in range(0, len(todo), EMBED_BATCH):
+                chunk = todo[start:start + EMBED_BATCH]
+                for row, vec in zip(chunk, self.embed([r[text] for r in chunk])):
+                    write(row[uid], vec, model)
+            if todo:
+                done[kind] = len(todo)
+        return done
 
     def mark_link(self, link_uid: str, status: str) -> None:
         """Rot, recorded where it was found - the re-probe is the only thing that can see it."""
