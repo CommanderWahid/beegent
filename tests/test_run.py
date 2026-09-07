@@ -98,7 +98,7 @@ def test_discover_records_the_failed_angle(monkeypatch):
             cost={"steps_used": 3, "http_requests": 2, "prompt_tokens": 300,
                   "completion_tokens": 60, "total_tokens": 360})
 
-    monkeypatch.setattr(runmod, "plan", lambda c, u, f=None: [good, bad])
+    monkeypatch.setattr(runmod, "plan", lambda c, u, f=None: ([good, bad], ""))
     monkeypatch.setattr(runmod, "resolve_angle", fake_resolve)
     monkeypatch.setattr(runmod, "run_critic",
                         lambda *a: {"decision": "needs_human_review", "note": "n"})
@@ -331,7 +331,8 @@ def test_prior_advice_reaches_the_planner_as_feedback(monkeypatch, tmp_path, res
 
     _install(monkeypatch)
     seen = {}
-    monkeypatch.setattr(runmod, "plan", lambda c, u, f=None: seen.setdefault("feedback", f) and [])
+    monkeypatch.setattr(runmod, "plan",
+                        lambda c, u, f=None: (seen.setdefault("feedback", f) and [], ""))
     runmod.discover("Atlantis", "land cover", store=store)
 
     assert "try the bulk server" in seen["feedback"]
@@ -568,3 +569,36 @@ def test_a_failed_measurement_does_not_cost_the_run(monkeypatch, tmp_path, reset
     monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
 
     assert runmod.discover("Atlantis", "land cover", store=store).status == "needs_human_review"
+
+
+def test_a_dead_planner_never_pays_for_a_critic(monkeypatch, reset_llm_usage):
+    """The critic reviews what was TRIED; with nothing tried it can only invent."""
+    from beegent import run as runmod
+
+    tries, criticised = [], []
+    _install(monkeypatch, critic_decision="replan")
+    monkeypatch.setattr(runmod, "plan",
+                        lambda *a, **k: tries.append(1) or ([], "the planner call failed: "
+                                                                "InternalServerError: 503"))
+    monkeypatch.setattr(runmod, "run_critic", lambda *a: criticised.append(1) or {})
+    run = runmod.discover("Atlantis", "land cover")
+
+    assert criticised == [], "no angles means nothing to review"
+    assert len(tries) == config.MAX_ITERATIONS, "but a second attempt is cheap and might work"
+    assert run.status == "needs_human_review"
+    assert "503" in run.reason, "the real cause, not 'no angle resolved to a verified download'"
+
+
+def test_a_planner_that_recovers_still_resolves(monkeypatch, reset_llm_usage):
+    """Skipping the critic must not end a run that was only briefly unlucky."""
+    from beegent import run as runmod
+
+    calls = []
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "plan",
+                        lambda *a, **k: ([], "down") if calls.append(1) or len(calls) == 1
+                        else ([SearchAngle("d", "web_search", "r", url="https://ok.example/p")], ""))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())  # already a pair
+    run = runmod.discover("Atlantis", "land cover")
+
+    assert run.status == "ok" and run.candidates, "iteration 2 planned and resolved normally"

@@ -163,8 +163,17 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
         run.iteration = iteration
         _log.info(f"\n=== iteration {iteration}/{config.MAX_ITERATIONS} ===")
 
-        angles = plan(country, use_case, feedback)
+        angles, plan_error = plan(country, use_case, feedback)
         _log.info(f"[plan] {len(angles)} angle(s)")
+        if not angles:
+            # The critic reviews what was TRIED, so with nothing tried it can only invent -
+            # and it is the most expensive call in the run. A second plan attempt is the
+            # cheap thing that might help when a provider is briefly unavailable.
+            if iteration >= config.MAX_ITERATIONS:
+                run.status = "needs_human_review"
+                run.reason = plan_error or "the planner produced no usable angles"
+                return _finalize(run, store, tried)
+            continue
         for angle in angles:
             _log.info(f"  - [{angle.channel_hint}] {angle.description}")
 

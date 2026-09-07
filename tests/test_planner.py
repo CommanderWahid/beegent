@@ -19,10 +19,10 @@ def angle(**over):
 
 def run_plan(monkeypatch, angles, country="France",
              use_case="building footprints as a geoparquet file"):
-    """plan() with chat_json stubbed - the suite never calls a model."""
+    """plan()'s ANGLES with chat_json stubbed - the suite never calls a model."""
     reply = ({"angles": angles}, TokenUsage())
     monkeypatch.setattr(planner, "chat_json", lambda role, messages: reply)
-    return plan(country, use_case)
+    return plan(country, use_case)[0]
 
 
 # --- angle validation: behaviour that already existed and was unpinned ---
@@ -61,13 +61,13 @@ def test_a_raising_call_yields_no_angles_rather_than_propagating(monkeypatch):
         raise RuntimeError("429")
 
     monkeypatch.setattr(planner, "chat_json", boom)
-    assert plan("France", "buildings") == []
+    assert plan("France", "buildings")[0] == []
 
 
 def test_no_answer_yields_no_angles_rather_than_raising(monkeypatch):
     """chat_json returning None means 'no answer', never a negative answer."""
     monkeypatch.setattr(planner, "chat_json", lambda role, messages: (None, TokenUsage()))
-    assert plan("France", "buildings") == []
+    assert plan("France", "buildings")[0] == []
 
 
 def test_the_prompt_treats_a_delivery_channel_as_not_a_format():
@@ -87,3 +87,18 @@ def test_an_explicitly_empty_format_survives_planning(monkeypatch):
     """The invariant the channel rule depends on - "" must not be substituted downstream."""
     got = run_plan(monkeypatch, [angle(format="")])
     assert got[0].format == "", "an empty format disarms the magic-byte check; keep it empty"
+
+
+def test_a_failed_call_reports_why_it_produced_nothing(monkeypatch):
+    """A provider outage and an unplannable use case must not look alike downstream."""
+    monkeypatch.setattr(planner, "chat_json",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("503 capacity")))
+    angles, reason = plan("France", "buildings")
+
+    assert angles == []
+    assert "RuntimeError" in reason and "503 capacity" in reason
+
+
+def test_a_successful_call_reports_no_reason(monkeypatch):
+    monkeypatch.setattr(planner, "chat_json", lambda *a, **k: ({"angles": [angle()]}, TokenUsage(1, 1)))
+    assert plan("France", "buildings")[1] == ""

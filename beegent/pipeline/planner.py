@@ -85,7 +85,8 @@ Reply with JSON only:
               "vintage": "latest"}}]}}"""
 
 
-def plan(country: str, use_case: str, feedback: str | None = None) -> list[SearchAngle]:
+def plan(country: str, use_case: str, feedback: str | None = None) -> tuple:
+    """(angles, reason) - the reason is empty on success, and why it failed otherwise."""
     user = f"Country: {country}\nUse case: {use_case}"
     if feedback:
         user += (
@@ -105,8 +106,9 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
         )
     except Exception as exc:
         # No angles is a survivable run that escalates; a traceback loses everything.
+        failed = f"the planner call failed: {type(exc).__name__}: {exc}"
         _log.info(f"  [plan] call failed: {type(exc).__name__}: {exc}")
-        data = None
+        return [], failed
 
     angles: list[SearchAngle] = []
     for raw in (data or {}).get("angles", [])[: config.MAX_ANGLES]:
@@ -129,4 +131,4 @@ def plan(country: str, use_case: str, feedback: str | None = None) -> list[Searc
                 vintage=str(raw.get("vintage") or "latest"),
             )
         )
-    return angles
+    return angles, ""
