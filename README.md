@@ -84,28 +84,20 @@ itself. If nothing was verified, a critic decides whether to re-plan or ask for 
 planner -> catalogs -> geofetch (per angle) -> gate -> critic -> (replan | needs_human_review)
 ```
 
-Nothing in the codebase knows about any specific portal, vendor or country.
+Nothing in the codebase knows about any specific portal, vendor or country, and **no API key is
+needed** — search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs locally.
 
-See [Architecture](docs/architecture.md) and [The geofetch agent](docs/geofetch.md).
+## Documentation
 
-## Install
-
-```bash
-git clone https://github.com/CommanderWahid/beegent.git
-cd beegent
-uv sync
-
-ollama pull deepseek-r1:14b qwen3:8b     # default backend is local Ollama
-OLLAMA_CONTEXT_LENGTH=16384 ollama serve
-```
-
-No API keys. Search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs
-locally. <br>
-Runs remember each other: a dataset found once is re-probed and returned in under a second, for
-zero tokens ([how](docs/architecture.md#the-store)). <br>
-You can add your backend (connector) or use the provided ones: Groq, Mistral, Databricks: [Backends](docs/backends.md).
-
-Full walkthrough: [Getting started](docs/getting-started.md).
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | Install, first run, reading the result |
+| [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
+| [Backends](docs/backends.md) | Ollama, Groq, Mistral, Databricks, writing a connector |
+| [Architecture](docs/architecture.md) | The seven steps, the store, and how a run flows |
+| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the seven guardrails |
+| [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
+| [Context management](docs/performance.md) | What occupies the context window, what it costs, and what memory saves |
 
 ## Status
 
@@ -122,30 +114,6 @@ holds. Known limits, stated plainly:
 - Portal APIs change. An angle that worked last month may dead-end today.
 
 Pre-1.0: interfaces may change.
-
-## Documentation
-
-| | |
-|---|---|
-| [Getting started](docs/getting-started.md) | Install, first run, reading the result |
-| [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
-| [Backends](docs/backends.md) | Ollama, Groq, Mistral, Databricks, writing a connector |
-| [Architecture](docs/architecture.md) | The seven steps, the store, and how a run flows |
-| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the seven guardrails |
-| [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
-| [Performance](docs/performance.md) | What a run costs and which settings move it |
-
-## Development
-
-The test suite is fully offline — no network, no API key, no LLM — so you can work on the agent
-loop without spending a token:
-
-```bash
-uv run pytest                                       # 299 cases, ~1s
-uvx ruff check --select F,ERA .
-```
-
-Runs on Python 3.10, 3.11 and 3.12.
 
 ## License
 

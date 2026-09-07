@@ -8,7 +8,7 @@
 | [Architecture](architecture.md) | The seven steps, the store, and how a run flows through them |
 | [The geofetch agent](geofetch.md) | The agent loop, its three tools, and the seven guardrails |
 | [Output schema](output-schema.md) | `candidate_list.json` field by field |
-| [Performance](performance.md) | What a run costs and which settings actually move it |
+| [Context management](performance.md) | What occupies the context window, what it costs, and what memory saves |
 
 New here? Read [Getting started](getting-started.md), then [Output schema](output-schema.md) to
 understand what you get back.
