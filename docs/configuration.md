@@ -57,10 +57,12 @@ put them in `.env` (see `.env.example`); real environment variables win over `.e
 
 ## Pipeline settings
 
-All in `beegent/config.py`. **Every integer setting below is overridable by an environment
+All in `beegent/config.py`. **Every numeric setting below is overridable by an environment
 variable of the same name**, with the same precedence as the model variables — so
-`MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value that is
-not a positive integer fails at startup rather than silently falling back.
+`MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value of the
+wrong type, or outside the range a setting can mean, fails at startup rather than silently falling
+back — a cosine above `1.0` would match nothing at all, and doing that quietly is the failure the
+check exists to prevent.
 
 Two similarity thresholds, both measured from your own stored data and both invalidated whenever
 `EMBED_MODEL` changes:
@@ -81,14 +83,31 @@ than silently losing the catalog and run memory. An unchanged model finds nothin
 
 What that does *not* fix is the two thresholds: cosines are not comparable across models. So on a
 model change the run also **measures both bands from your stored data and warns** when one of these
-constants now falls outside its band — naming the value it would adopt. It never changes anything:
-a threshold that moved on its own would drift the check that lets a catalog hit end a run with zero
-LLM calls. Adopting it is a one-line edit to `beegent/config.py`, and a deliberate one.
+constants now falls outside its band, naming the value it recommends:
 
-Five settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
-GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`, and
-the two similarity thresholds `CATALOG_MIN_RELEVANCE` / `MEMORY_MIN_RELEVANCE` — both are measured
-against a specific `EMBED_MODEL`, so a guessed override silently mis-filters rather than failing.
+```
+[memory] WARNING CATALOG_MIN_RELEVANCE=0.3 is outside the band the stored data implies
+         (0.691-0.731) - it was measured for another embedding model. Nothing was
+         changed; to adopt the recommendation set CATALOG_MIN_RELEVANCE=0.71
+```
+
+**It never changes anything itself** — a threshold that moved on its own would drift the check that
+lets a catalog hit end a run with zero LLM calls. Applying the recommendation is yours to do, and
+takes an environment variable rather than a source edit:
+
+```bash
+CATALOG_MIN_RELEVANCE=0.71 uv run python -m beegent.run --country ... --use-case ...
+```
+
+Two limits worth knowing. The measurement runs **only on a model change**, so a value you set by
+hand under an unchanged model is not checked — the measurement is an O(n²) pass over stored vectors
+and is not worth paying every run. And `intersect()` reports no band at all when your stored use
+cases disagree about where the boundary is, which on real data happens often; no band means no
+recommendation, not a silent average.
+
+Three settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
+GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`,
+a dict and its float default with no per-run reason to retune them.
 
 ### Breadth and depth
 
@@ -100,7 +119,8 @@ against a specific `EMBED_MODEL`, so a guessed override silently mis-filters rat
 | `CATALOG_FRESH_DAYS` | `7` | A stored link newer than this answers the run outright — no planner, no agent. `0` disables it |
 | `MAX_CATALOG_PROBES` | `3` | Stored links re-probed per run before any angle starts |
 | `MEMORY_RUNS` | `3` | Past **relevant** runs replayed to the planner and critic, when a store is configured |
-| `MEMORY_MIN_RELEVANCE` | `0.45` | Cosine a past run's use case must reach to be replayed. Not overridable — measured |
+| `MEMORY_MIN_RELEVANCE` | `0.45` | Cosine a past run's use case must reach to be replayed. `0` replays every run for the country |
+| `CATALOG_MIN_RELEVANCE` | `0.30` | Cosine a stored dataset must reach for its link to be offered. `0` offers every stored link |
 | `MAX_ITERATIONS` | `2` | How many times the critic may send the run back to the planner |
 | `MAX_FINAL_CANDIDATES` | `3` | Cap on the candidate list |
 

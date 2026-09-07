@@ -145,4 +145,6 @@ returns nothing.
 
 `EMBED_MODEL` selects the model. Changing it invalidates every vector already stored — they are
 excluded from matching rather than compared — so the next run re-embeds them for you, then warns
-if `CATALOG_MIN_RELEVANCE` or `MEMORY_MIN_RELEVANCE` no longer fits the data under the new model.
+if `CATALOG_MIN_RELEVANCE` or `MEMORY_MIN_RELEVANCE` no longer fits the data under the new model,
+naming the value it recommends. Both are environment variables, so adopting one needs no code
+change: `CATALOG_MIN_RELEVANCE=0.71 uv run python -m beegent.run ...`.

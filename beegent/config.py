@@ -3,15 +3,13 @@
 import os
 
 LLM_BACKEND = os.environ.get("LLM_BACKEND", "ollama")  # key into connectors.CONNECTORS
-# Cross-run memory, on by default. Expanded HERE so a "~" set in .env - where no shell
-# expansion happens - does not become a literal "~" directory. Set empty to disable.
+# On by default. Expanded HERE: a "~" from .env gets no shell expansion. Empty disables.
 BEEGENT_DB = os.path.expanduser(os.environ.get("BEEGENT_DB", "~/.beegent/memory.db"))
-# Catalog matching model. Empty disables embeddings entirely; vectors are only ever
-# comparable within one model, so the name is stored beside every vector.
+# Catalog matching model; empty disables embeddings. Vectors compare only within one model.
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 
-def _int(name: str, default: int) -> int:
+def _int(name: str, default: int, minimum: int = 1) -> int:
     """An env var of the same name wins; a bad value fails at import, not mid-run."""
     raw = os.environ.get(name)
     if raw is None:
@@ -20,8 +18,22 @@ def _int(name: str, default: int) -> int:
         value = int(raw)
     except ValueError:
         raise SystemExit(f"error: {name}={raw!r} is not an integer")
-    if value < 1:
-        raise SystemExit(f"error: {name}={value} must be at least 1")
+    if value < minimum:
+        raise SystemExit(f"error: {name}={value} must be at least {minimum}")
+    return value
+
+
+def _float(name: str, default: float) -> float:
+    """Same contract as _int, for a cosine: an env var wins, a bad value fails at import."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SystemExit(f"error: {name}={raw!r} is not a number")
+    if not 0.0 <= value <= 1.0:  # above 1.0 nothing matches, and the feature dies in silence
+        raise SystemExit(f"error: {name}={value} must be a cosine between 0.0 and 1.0")
     return value
 
 
@@ -29,9 +41,8 @@ def _int(name: str, default: int) -> int:
 
 MAX_ANGLES = _int("MAX_ANGLES", 3)  # main cost lever: every angle is a full agent run
 MAX_CATALOG_PROBES = _int("MAX_CATALOG_PROBES", 3)  # stored links re-probed per run
-# Within this, a stored link answers the run outright and no LLM is called at all.
-# It is the ONLY thing forcing periodic rediscovery, so 0 disables the short-circuit.
-CATALOG_FRESH_DAYS = _int("CATALOG_FRESH_DAYS", 7)
+# A link this fresh answers the run outright, with no LLM call at all; 0 disables that.
+CATALOG_FRESH_DAYS = _int("CATALOG_FRESH_DAYS", 7, minimum=0)
 MEMORY_RUNS = _int("MEMORY_RUNS", 3)  # RELEVANT past runs replayed, when a store exists
 MAX_ITERATIONS = _int("MAX_ITERATIONS", 2)  # hard cap on planner attempts (critic re-plans)
 
@@ -57,26 +68,19 @@ MAX_URLS_FOUND = _int("MAX_URLS_FOUND", 60)  # entries in fetch_page()'s flat ur
 PROBE_BYTES = 16  # NOT overridable: a correctness floor, the geopackage signature is 16 bytes
 PROBE_TEXT_BYTES = _int("PROBE_TEXT_BYTES", 65_536)  # second read when the payload is JSON/XML
 
-# Verified beats self-assessed, so even a "low" self-report outranks anything unverified.
-# Not overridable: a dict and its float default, with no per-run reason to retune them.
-# Cosine a stored dataset must reach to be offered. MEASURED, not guessed: a run
-# re-measures both bands on a model change and warns when one of these falls outside.
-# Not overridable: a float, which _int() neither handles nor needs.
-CATALOG_MIN_RELEVANCE = 0.30
-# Cosine a past run's use case must reach to be replayed. A SEPARATE number from the one
-# above: that compares a use case to a DATASET, this compares two use cases, and the two
-# distributions are not the same. Measured band (0.197, 0.721) on all-MiniLM-L6-v2.
-MEMORY_MIN_RELEVANCE = 0.45
+# --- similarity thresholds: MEASURED, not guessed; a run warns when one drifts ----
 
+# Cosine a stored dataset must reach to be offered; 0 offers every stored link.
+CATALOG_MIN_RELEVANCE = _float("CATALOG_MIN_RELEVANCE", 0.30)
+# Cosine a past run's use case must reach to be replayed; a different comparison, so separate.
+MEMORY_MIN_RELEVANCE = _float("MEMORY_MIN_RELEVANCE", 0.45)
+
+# Not overridable: a dict and its float default, with no per-run reason to retune them.
 CONFIDENCE_BY_REPORT = {"high": 0.95, "medium": 0.8, "low": 0.7}
 CONFIDENCE_DEFAULT = 0.7
 
 MAX_FINAL_CANDIDATES = _int("MAX_FINAL_CANDIDATES", 3)  # output cap; binds across iterations
-
 CHAT_JSON_ATTEMPTS = _int("CHAT_JSON_ATTEMPTS", 2)  # an unparseable JSON-mode call gets one retry
-
 HTTP_TIMEOUT = _int("HTTP_TIMEOUT", 20)
-
-# Worst case for ONE completion is (LLM_MAX_RETRIES + 1) x LLM_TIMEOUT, and angles run serially.
-LLM_TIMEOUT = _int("LLM_TIMEOUT", 180)
-LLM_MAX_RETRIES = _int("LLM_MAX_RETRIES", 3)  # one more than the SDK default, for rate-limit bursts
+LLM_TIMEOUT = _int("LLM_TIMEOUT", 180)  # worst case per completion is (LLM_MAX_RETRIES + 1) x this
+LLM_MAX_RETRIES = _int("LLM_MAX_RETRIES", 3)  # one more than the SDK default

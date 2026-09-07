@@ -96,8 +96,8 @@ def _warn_stale_thresholds(store: Store) -> None:
             _log.warning(
                 f"[memory] WARNING {name}={current} is outside the band the stored data "
                 f"implies ({low:.3f}-{high:.3f}) - it was measured for another embedding "
-                f"model. Nothing was changed; edit beegent/config.py to adopt "
-                f"{(low + high) / 2:.2f}"
+                f"model. Nothing was changed; to adopt the recommendation set "
+                f"{name}={(low + high) / 2:.2f}"
             )
 
 
