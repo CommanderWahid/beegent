@@ -59,9 +59,9 @@ PROBE_TEXT_BYTES = _int("PROBE_TEXT_BYTES", 65_536)  # second read when the payl
 
 # Verified beats self-assessed, so even a "low" self-report outranks anything unverified.
 # Not overridable: a dict and its float default, with no per-run reason to retune them.
-# Cosine a stored dataset must reach to be offered. MEASURED, not guessed - see
-# tools/calibrate_relevance.py, and re-measure whenever EMBED_MODEL changes. Not
-# overridable: a float, which _int() neither handles nor needs.
+# Cosine a stored dataset must reach to be offered. MEASURED, not guessed: a run
+# re-measures both bands on a model change and warns when one of these falls outside.
+# Not overridable: a float, which _int() neither handles nor needs.
 CATALOG_MIN_RELEVANCE = 0.30
 # Cosine a past run's use case must reach to be replayed. A SEPARATE number from the one
 # above: that compares a use case to a DATASET, this compares two use cases, and the two

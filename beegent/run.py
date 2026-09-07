@@ -77,6 +77,30 @@ def _prior_advice(prior: list[dict]) -> str:
     return "\n".join(lines)
 
 
+#: The threshold each measured band is checked against - re-embedding cannot repair these.
+_THRESHOLDS = {"catalog": "CATALOG_MIN_RELEVANCE", "memory": "MEMORY_MIN_RELEVANCE"}
+
+
+def _warn_stale_thresholds(store: Store) -> None:
+    """Re-embedding makes the store comparable again, never calibrated. Say so, change nothing."""
+    try:
+        measured = store.measure_relevance()
+    except Exception as exc:  # advisory only: a failed measurement must not cost a run
+        _log.info(f"[memory] thresholds not measured ({type(exc).__name__}: {exc})")
+        return
+    for key, (low, high) in measured.items():
+        name = _THRESHOLDS[key]
+        current = getattr(config, name)
+        # Inside the band the constant still separates the data, so warning would be noise.
+        if not low <= current <= high:
+            _log.warning(
+                f"[memory] WARNING {name}={current} is outside the band the stored data "
+                f"implies ({low:.3f}-{high:.3f}) - it was measured for another embedding "
+                f"model. Nothing was changed; edit beegent/config.py to adopt "
+                f"{(low + high) / 2:.2f}"
+            )
+
+
 def _finalize(run: DiscoveryRun, store: Store, tried: list[dict]) -> DiscoveryRun:
     """Fold the per-role LLM meter into run.totals, persist, then hand the run back."""
     for role, usage in usage_by_role().items():
@@ -113,6 +137,7 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
     if synced:  # silent on the common path, where the model has not changed
         _log.info(f"[memory] re-embedded {synced.get('runs', 0)} run(s) and "
                   f"{synced.get('links', 0)} link(s) for the current model")
+        _warn_stale_thresholds(store)
 
     # Deterministic and query-independent, so run once and seed every planner attempt.
     _log.info("[catalog] querying catalogs")

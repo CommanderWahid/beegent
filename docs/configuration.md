@@ -62,8 +62,8 @@ variable of the same name**, with the same precedence as the model variables —
 `MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value that is
 not a positive integer fails at startup rather than silently falling back.
 
-Two similarity thresholds, both measured with `tools/calibrate_relevance.py` and both to be
-re-measured whenever `EMBED_MODEL` changes:
+Two similarity thresholds, both measured from your own stored data and both invalidated whenever
+`EMBED_MODEL` changes:
 
 - **`CATALOG_MIN_RELEVANCE`** (`0.30`) — the cosine a stored **dataset** must reach for its link to
   be offered. Compares a use case to a dataset description.
@@ -79,9 +79,11 @@ matching rather than compared. **A run repairs this itself**: it re-embeds whate
 cannot compare before anything reads a vector, so a model change costs one slower startup rather
 than silently losing the catalog and run memory. An unchanged model finds nothing to do.
 
-What that does *not* fix is the two thresholds: cosines are not comparable across models, so re-run
-`tools/calibrate_relevance.py` after a model change or you are filtering with a number measured for
-something else.
+What that does *not* fix is the two thresholds: cosines are not comparable across models. So on a
+model change the run also **measures both bands from your stored data and warns** when one of these
+constants now falls outside its band — naming the value it would adopt. It never changes anything:
+a threshold that moved on its own would drift the check that lets a catalog hit end a run with zero
+LLM calls. Adopting it is a one-line edit to `beegent/config.py`, and a deliberate one.
 
 Five settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
 GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`, and
@@ -98,7 +100,7 @@ against a specific `EMBED_MODEL`, so a guessed override silently mis-filters rat
 | `CATALOG_FRESH_DAYS` | `7` | A stored link newer than this answers the run outright — no planner, no agent. `0` disables it |
 | `MAX_CATALOG_PROBES` | `3` | Stored links re-probed per run before any angle starts |
 | `MEMORY_RUNS` | `3` | Past **relevant** runs replayed to the planner and critic, when a store is configured |
-| `MEMORY_MIN_RELEVANCE` | `0.45` | Cosine a past run's use case must reach to be replayed. Not overridable — measured, see `tools/calibrate_relevance.py` |
+| `MEMORY_MIN_RELEVANCE` | `0.45` | Cosine a past run's use case must reach to be replayed. Not overridable — measured |
 | `MAX_ITERATIONS` | `2` | How many times the critic may send the run back to the planner |
 | `MAX_FINAL_CANDIDATES` | `3` | Cap on the candidate list |
 
@@ -146,14 +148,3 @@ Watch `LLM_TIMEOUT` and `LLM_MAX_RETRIES` together: the worst case for a single 
 |---|---|---|
 | `CONFIDENCE_BY_REPORT` | `{high: 0.95, medium: 0.8, low: 0.7}` | Maps the model's self-assessment |
 | `CONFIDENCE_DEFAULT` | `0.7` | Used when the self-assessment is unrecognised |
-
-## Development tools
-
-One script in `tools/`, not part of the pipeline:
-
-| Command | What it does |
-|---|---|
-| `python -m tools.calibrate_relevance ["use case" ...]` | Scores your stored links against each query, prints the band the data implies, and suggests `CATALOG_MIN_RELEVANCE`. Re-run it whenever `EMBED_MODEL` changes |
-
-`calibrate_relevance` exits non-zero when no single threshold satisfies every query, printing the
-conflicting bands rather than averaging them into a number that works for neither.

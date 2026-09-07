@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from beegent import config
-from beegent.embedding import dot, from_blob, make_embedder, to_blob
+from beegent.embedding import calibrate, dot, from_blob, make_embedder, to_blob
 from beegent.schemas import DiscoveryRun
 from beegent.web_tools import normalize_url
 
@@ -77,6 +77,8 @@ class Store(Protocol):
 
     def sync_embeddings(self) -> dict: ...
 
+    def measure_relevance(self) -> dict: ...
+
 
 class NullStore:
     """The default: no persistence, so the CLI stays standalone and tests stay offline."""
@@ -94,6 +96,9 @@ class NullStore:
         return None
 
     def sync_embeddings(self) -> dict:
+        return {}
+
+    def measure_relevance(self) -> dict:
         return {}
 
 
@@ -217,6 +222,38 @@ class SqliteStore:
                 "WHERE embedding IS NOT NULL AND embed_model = ?", (model,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def embedded_runs(self, model: str) -> list[dict]:
+        """Every run comparable against THIS model - filtered in SQL, never in Python."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT use_case, embedding FROM runs "
+                "WHERE embedding IS NOT NULL AND embed_model = ?", (model,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def measure_relevance(self) -> dict:
+        """What the STORED data implies each threshold should be. Measures, never applies."""
+        model = getattr(self.embed, "name", None) if self.embed else None
+        if not model:
+            return {}
+        # The queries are what this user actually asks for, never a hardcoded list.
+        runs = self.embedded_runs(model)
+        queries = [from_blob(r["embedding"]) for r in runs]
+        if not queries:
+            return {}
+
+        links = [from_blob(h["embedding"]) for h in self.embedded_links(model)]
+        # A run scores 1.0 against itself by construction, so every band would start there.
+        memory = [[dot(q, o) for j, o in enumerate(queries) if j != i]
+                  for i, q in enumerate(queries)]
+        out = {}
+        for name, scored in (("catalog", [[dot(q, v) for v in links] for q in queries]),
+                             ("memory", memory)):
+            # band() needs two scores to find a gap between them; one is not a boundary.
+            if scored and len(scored[0]) >= 2 and (agreed := calibrate(scored)):
+                out[name] = agreed
+        return out
 
     def links_needing_embedding(self, model: str) -> list[dict]:
         """Never embedded, or embedded with another model - both are unmatchable today."""

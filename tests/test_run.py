@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """run.py's ranking and the discover() loop."""
 
+import logging
 import os
 
 from beegent import config, llm
@@ -514,3 +515,56 @@ def test_a_failed_re_embedding_does_not_cost_the_run(monkeypatch, tmp_path, rese
     run = runmod.discover("Atlantis", "land cover", store=store)
 
     assert run.status == "needs_human_review", "the run still finished and still reported"
+
+
+def _after_a_model_change(monkeypatch, store, measured):
+    """Only a model change reaches the threshold check, so sync must report work."""
+    from beegent import run as runmod
+
+    monkeypatch.setattr(store, "sync_embeddings", lambda: {"runs": 1})
+    monkeypatch.setattr(store, "measure_relevance", lambda: measured)
+    _install(monkeypatch, critic_decision="needs_human_review")
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+
+
+def test_a_threshold_inside_the_measured_band_is_not_warned_about(monkeypatch, tmp_path,
+                                                                  caplog, reset_llm_usage):
+    """Warning about a number that still works is how a warning gets ignored."""
+    from beegent import run as runmod
+
+    store = _store(tmp_path)
+    _after_a_model_change(monkeypatch, store, {"catalog": (0.20, 0.40)})  # 0.30 sits inside
+    with caplog.at_level(logging.WARNING):
+        runmod.discover("Atlantis", "land cover", store=store)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_threshold_outside_the_measured_band_warns_and_changes_nothing(monkeypatch, tmp_path,
+                                                                        caplog, reset_llm_usage):
+    """The BGE case: re-embedding made the store comparable, not calibrated."""
+    from beegent import run as runmod
+
+    before = config.CATALOG_MIN_RELEVANCE
+    store = _store(tmp_path)
+    _after_a_model_change(monkeypatch, store, {"catalog": (0.512, 0.694)})  # 0.30 is far below
+    with caplog.at_level(logging.WARNING):
+        runmod.discover("Atlantis", "land cover", store=store)
+
+    warned = "\n".join(r.message for r in caplog.records if r.levelno >= logging.WARNING)
+    assert "CATALOG_MIN_RELEVANCE" in warned and "0.512-0.694" in warned
+    assert "0.60" in warned, "it names the value that would be adopted"
+    assert config.CATALOG_MIN_RELEVANCE == before, "measured, never applied"
+
+
+def test_a_failed_measurement_does_not_cost_the_run(monkeypatch, tmp_path, reset_llm_usage):
+    from beegent import run as runmod
+
+    store = _store(tmp_path)
+    monkeypatch.setattr(store, "sync_embeddings", lambda: {"runs": 1})
+    monkeypatch.setattr(store, "measure_relevance",
+                        lambda: (_ for _ in ()).throw(RuntimeError("model gone")))
+    _install(monkeypatch, critic_decision="needs_human_review")
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+
+    assert runmod.discover("Atlantis", "land cover", store=store).status == "needs_human_review"

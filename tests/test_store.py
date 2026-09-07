@@ -416,3 +416,40 @@ def test_with_no_embedder_sync_leaves_every_vector_untouched(tmp_path):
     assert SqliteStore(path).sync_embeddings() == {}, "no embedder, no work"
     after = SqliteStore(path, embed=_embedder(AXES, name="old"))
     assert len(after.prior_runs("Atlantis", 3, "land cover")) == 1, "the old vector survived"
+
+
+# --- measuring the thresholds the stored data implies ---
+
+
+def _spread(vecs, name="spread"):
+    """Text -> a caller-supplied vector, so the scores in a measurement are known exactly."""
+    def embed(texts):
+        return [normalise(vecs[t]) for t in texts]
+    embed.name = name
+    return embed
+
+
+def test_a_run_is_excluded_from_its_own_memory_corpus(tmp_path):
+    """A run scores 1.0 against itself, so every band would start there and mean nothing."""
+    # Two tight pairs: every query then sees a real gap, so the bands can agree.
+    vecs = {"a1": [1.0, 0.0], "a2": [0.99, 0.14], "b1": [0.0, 1.0], "b2": [0.14, 0.99]}
+    store = SqliteStore(str(tmp_path / "m.db"), embed=_spread(vecs))
+    for uc in vecs:
+        store.record_run(DiscoveryRun(country="Atlantis", use_case=uc, status="ok",
+                                      totals={}), [])
+
+    low, high = store.measure_relevance()["memory"]
+    assert high < 1.0, "a self-match would pin the band's top at exactly 1.0"
+    assert low > 0.0, "and the band still separates the two pairs"
+
+
+def test_too_little_data_yields_no_band_at_all(tmp_path):
+    """band() needs two scores to find a gap between them; one is not a boundary."""
+    store = SqliteStore(str(tmp_path / "m.db"), embed=_spread({"a": [1.0, 0.0]}))
+    store.record_run(DiscoveryRun(country="Atlantis", use_case="a", status="ok", totals={}), [])
+
+    assert store.measure_relevance() == {}, "one run cannot imply a threshold"
+
+
+def test_with_no_embedder_nothing_is_measured(tmp_path):
+    assert SqliteStore(str(tmp_path / "m.db")).measure_relevance() == {}

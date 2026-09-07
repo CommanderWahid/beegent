@@ -3,7 +3,7 @@
 | Page | What it covers |
 |---|---|
 | [Getting started](getting-started.md) | Install, run it for the first time, read the result |
-| [Configuration](configuration.md) | Every setting, CLI flags, precedence, and the `tools/` scripts |
+| [Configuration](configuration.md) | Every setting, CLI flags, and precedence |
 | [Backends](backends.md) | Ollama, Groq, Mistral, Databricks, and writing your own connector |
 | [Architecture](architecture.md) | The seven steps, the store, and how a run flows through them |
 | [The geofetch agent](geofetch.md) | The agent loop, its three tools, and the seven guardrails |

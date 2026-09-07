@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Vector helpers and the calibration arithmetic behind CATALOG_MIN_RELEVANCE."""
 
-from beegent.embedding import band, dot, from_blob, intersect, normalise, to_blob
+from beegent.embedding import band, calibrate, dot, from_blob, intersect, normalise, to_blob
 
 
 def test_a_vector_is_unit_length_and_round_trips():
@@ -44,3 +44,14 @@ def test_touching_bands_are_still_a_conflict():
 def test_a_query_with_no_gap_is_ignored_rather_than_fatal():
     assert intersect([None, (0.20, 0.40)]) == (0.20, 0.40)
     assert intersect([None]) is None
+
+
+def test_calibrate_is_the_band_every_query_agrees_on():
+    """One query's gap is not a threshold; the answer is what all of them tolerate."""
+    assert calibrate([[0.9, 0.2, 0.1], [0.8, 0.3, 0.1]]) == (0.3, 0.8)
+
+
+def test_calibrate_reports_a_conflict_rather_than_averaging_it():
+    """None means no single threshold works - averaging would hide exactly that."""
+    #     band (0.8, 0.9)              band (0.1, 0.18) - no value satisfies both
+    assert calibrate([[0.9, 0.8, 0.79, 0.78], [0.2, 0.19, 0.18, 0.1]]) is None

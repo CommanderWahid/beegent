@@ -53,6 +53,11 @@ def intersect(bands: list) -> tuple | None:
     return (low, high) if low < high else None
 
 
+def calibrate(scored: list) -> tuple | None:
+    """The band every query agrees on - None when no single threshold satisfies them all."""
+    return intersect([band(s) for s in scored])
+
+
 class FastEmbedder:
     """Local ONNX model. No API, no key, independent of LLM_BACKEND."""
 

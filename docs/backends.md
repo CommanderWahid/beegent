@@ -144,5 +144,5 @@ API, no key, and nothing from your backend — there is no `embedder` role. Inst
 returns nothing.
 
 `EMBED_MODEL` selects the model. Changing it invalidates every vector already stored — they are
-excluded from matching rather than compared — so the next run re-embeds them for you
-afterwards, and re-measure `CATALOG_MIN_RELEVANCE` with `python -m tools.calibrate_relevance`.
+excluded from matching rather than compared — so the next run re-embeds them for you, then warns
+if `CATALOG_MIN_RELEVANCE` or `MEMORY_MIN_RELEVANCE` no longer fits the data under the new model.
