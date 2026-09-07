@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from beegent import config
-from beegent.embedding import make_embedder, to_blob
+from beegent.embedding import dot, from_blob, make_embedder, to_blob
 from beegent.schemas import DiscoveryRun
 from beegent.web_tools import normalize_url
 
@@ -25,7 +25,11 @@ CREATE TABLE IF NOT EXISTS runs (
   critic_decision TEXT,
   critic_note     TEXT,
   tried           TEXT NOT NULL,
-  tokens          INTEGER NOT NULL
+  tokens          INTEGER NOT NULL,
+  -- The use_case vector, so a later run can ask for the runs that match ITS request
+  -- rather than merely the country's most recent. Nullable exactly like links.embedding.
+  embedding       BLOB,
+  embed_model     TEXT
 );
 CREATE INDEX IF NOT EXISTS runs_country_ts ON runs(country, ts DESC);
 
@@ -62,7 +66,7 @@ class Store(Protocol):
 
     def record_run(self, run: DiscoveryRun, tried: list[dict]) -> None: ...
 
-    def prior_runs(self, country: str, limit: int) -> list[dict]: ...
+    def prior_runs(self, country: str, limit: int, use_case: str = "") -> list[dict]: ...
 
     def verified_links(self, country: str) -> list[dict]: ...
 
@@ -75,7 +79,7 @@ class NullStore:
     def record_run(self, run: DiscoveryRun, tried: list[dict]) -> None:
         return None
 
-    def prior_runs(self, country: str, limit: int) -> list[dict]:
+    def prior_runs(self, country: str, limit: int, use_case: str = "") -> list[dict]:
         return []
 
     def verified_links(self, country: str) -> list[dict]:
@@ -121,21 +125,24 @@ class SqliteStore:
         """One transaction: the run, then every link it verified."""
         run_uid = str(uuid.uuid4())
         ts = _now()
+        # links is a log of DISCOVERIES: re-recording a cache hit would reset its
+        # freshness, and the window would then never expire.
+        linkable = [c for c in run.candidates
+                    if c.resource_url and c.source != "catalog"]
+        texts = [c.dataset or c.title for c in linkable]
+        # One batched call for the run and every link it verified, not two.
+        run_vec, *vectors = self._vectors([run.use_case] + texts)
+        model = getattr(self.embed, "name", None) if self.embed else None
         with self._connect() as db:
             db.execute(
-                "INSERT INTO runs (run_uid, ts, country, use_case, status, "
-                "critic_decision, critic_note, tried, tokens) VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO runs (run_uid, ts, country, use_case, status, critic_decision, "
+                "critic_note, tried, tokens, embedding, embed_model) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (run_uid, ts, run.country, run.use_case, run.status,
                  run.critic_decision, run.critic_note, json.dumps(tried, ensure_ascii=False),
-                 run.totals.get("total_tokens", 0)),
+                 run.totals.get("total_tokens", 0),
+                 to_blob(run_vec) if run_vec else None, model if run_vec else None),
             )
-            # links is a log of DISCOVERIES: re-recording a cache hit would reset its
-            # freshness, and the window would then never expire.
-            linkable = [c for c in run.candidates
-                        if c.resource_url and c.source != "catalog"]
-            texts = [c.dataset or c.title for c in linkable]
-            vectors = self._vectors(texts)
-            model = getattr(self.embed, "name", None) if self.embed else None
             for cand, text, vec in zip(linkable, texts, vectors):
                 db.execute(
                     "INSERT INTO links (link_uid, run_uid, country, dataset, url, "
@@ -149,14 +156,37 @@ class SqliteStore:
                      to_blob(vec) if vec else None, model if vec else None, ts),
                 )
 
-    def prior_runs(self, country: str, limit: int) -> list[dict]:
+    def _relevant(self, rows: list, use_case: str) -> list:
+        """Relevance FILTERS; recency still ORDERS, so rows arrive newest-first and stay so."""
+        model = getattr(self.embed, "name", None) if self.embed else None
+        if not (model and use_case and rows):
+            return rows  # cannot filter at all: pure recency, exactly as before
+        try:
+            query = self.embed([use_case])[0]
+        except Exception as exc:
+            _log.info(f"[embed] no relevance filter ({type(exc).__name__}: {exc})")
+            return rows
+        # Being ABLE to filter but finding nothing comparable is not the same as not being able
+        # to: an unmatchable row is excluded, never scored, exactly as query_catalogs does.
+        usable = [r for r in rows if r["embedding"] and r["embed_model"] == model]
+        if not usable:
+            _log.info(f"[memory] {len(rows)} run(s) stored, none embedded with {model!r}")
+        return [r for r in usable
+                if dot(query, from_blob(r["embedding"])) >= config.MEMORY_MIN_RELEVANCE]
+
+    def prior_runs(self, country: str, limit: int, use_case: str = "") -> list[dict]:
+        """The country's runs that match THIS use case - not merely its most recent ones."""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT ts, status, critic_decision, critic_note, tried FROM runs "
+                "SELECT ts, use_case, status, critic_decision, critic_note, tried, embedding, "
                 # rowid breaks a tie: two runs in the same instant must still order.
-                "WHERE country = ? ORDER BY ts DESC, rowid DESC LIMIT ?", (country, limit),
+                "embed_model FROM runs WHERE country = ? ORDER BY ts DESC, rowid DESC LIMIT ?",
+                # Scan well past what is returned, so the filter has room to reject.
+                (country, limit * 10),
             ).fetchall()
-        return [dict(r) | {"tried": json.loads(r["tried"])} for r in rows]
+        return [{k: v for k, v in dict(r).items() if k not in ("embedding", "embed_model")}
+                | {"tried": json.loads(r["tried"])}
+                for r in self._relevant(rows, use_case)[:limit]]
 
     def verified_links(self, country: str) -> list[dict]:
         with self._connect() as db:
@@ -188,6 +218,20 @@ class SqliteStore:
                 "WHERE embedding IS NULL OR embed_model IS NOT ?", (model,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def runs_needing_embedding(self, model: str) -> list[dict]:
+        """Changing EMBED_MODEL invalidates every vector at once; this is the recovery."""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT run_uid, use_case FROM runs "
+                "WHERE embedding IS NULL OR embed_model IS NOT ?", (model,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_run_embedding(self, run_uid: str, vec: list, model: str) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE runs SET embedding = ?, embed_model = ? WHERE run_uid = ?",
+                       (to_blob(vec), model, run_uid))
 
     def set_embedding(self, link_uid: str, vec: list, model: str) -> None:
         with self._connect() as db:

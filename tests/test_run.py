@@ -342,7 +342,7 @@ def test_a_broken_store_does_not_fail_the_run(monkeypatch, reset_llm_usage):
     from beegent import run as runmod
 
     class Broken:
-        def prior_runs(self, country, limit):
+        def prior_runs(self, country, limit, use_case=""):
             return []
         def record_run(self, run, tried):
             raise RuntimeError("disk on fire")

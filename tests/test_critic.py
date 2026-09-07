@@ -74,3 +74,27 @@ def test_dead_end_reasons_reach_the_critic_prompt(monkeypatch):
     assert out["decision"] == "replan"
     assert "https://slow.example/p" in seen["user"]
     assert "portal is login-walled" in seen["user"]
+
+
+def test_the_critic_is_told_what_earlier_runs_already_learned(mocker):
+    """URLs alone cannot say WHY a route died, nor that this advice was already spent."""
+    call = mocker.patch.object(cr, "chat_json",
+                        return_value=({"decision": "replan", "note": "n"}, TokenUsage(1, 1)))
+    cr.run_critic("Atlantis", "land cover", [], [], [], "nothing verified",
+               ["https://burned.example/"],
+               "- a previous run was advised: try the cadastre\n"
+               "- already tried and failed: https://burned.example/ (403 on every path)")
+
+    sent = call.call_args[0][1][1]["content"]
+    assert "try the cadastre" in sent, "its own past advice"
+    assert "403 on every path" in sent, "the REASON, not just the URL"
+    assert "ALREADY given" in sent, "framed as spent, or it reads as a suggestion to follow"
+
+
+def test_with_no_stored_history_the_critic_is_told_so_explicitly(mocker):
+    """An empty block must not read as 'nothing was ever tried'."""
+    call = mocker.patch.object(cr, "chat_json",
+                        return_value=({"decision": "replan", "note": "n"}, TokenUsage(1, 1)))
+    cr.run_critic("Atlantis", "land cover", [], [], [], "nothing verified", [])
+
+    assert "no earlier run for this country and use case" in call.call_args[0][1][1]["content"]

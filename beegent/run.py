@@ -110,16 +110,17 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
 
     # What earlier runs learned. Replayed through the channel the critic already uses, so
     # iteration 1 starts informed instead of rediscovering the same dead ends.
-    prior = store.prior_runs(country, config.MEMORY_RUNS)
+    prior = store.prior_runs(country, config.MEMORY_RUNS, use_case)
     if prior:
-        _log.info(f"[memory] {len(prior)} previous run(s) for {country}")
+        _log.info(f"[memory] {len(prior)} previous run(s) matching this use case")
     if catalog_hits and _fresh(catalog_hits):
         # Nothing to plan: the endpoint was found recently and re-probed a moment ago.
         _log.info(f"[catalog] answered from memory - {len(catalog_hits)} link(s), no LLM call")
         run.candidates = _rank(list(catalog_hits))
         return _finalize(run, store, [])
 
-    feedback: str | None = _prior_advice(prior) or None
+    advice = _prior_advice(prior)  # the planner's feedback, and the critic's history
+    feedback: str | None = advice or None
     tried: list[dict] = []  # every angle start URL, ACROSS iterations
     carried: list[Candidate] = []  # survivors from earlier iterations
     for iteration in range(1, config.MAX_ITERATIONS + 1):
@@ -186,6 +187,7 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
                                     + [t["url"] for rec in prior for t in rec["tried"]]))
         verdict = run_critic(
             country, use_case, angles, run.candidates, run.unresolved, gate_reason, burned,
+            advice,
         )
         _log.info(f"[critic] {verdict['decision']}: {verdict['note']}")
         # Recorded, not just used: this was consumed and dropped, so the run's most

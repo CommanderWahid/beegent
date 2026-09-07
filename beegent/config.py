@@ -32,7 +32,7 @@ MAX_CATALOG_PROBES = _int("MAX_CATALOG_PROBES", 3)  # stored links re-probed per
 # Within this, a stored link answers the run outright and no LLM is called at all.
 # It is the ONLY thing forcing periodic rediscovery, so 0 disables the short-circuit.
 CATALOG_FRESH_DAYS = _int("CATALOG_FRESH_DAYS", 7)
-MEMORY_RUNS = _int("MEMORY_RUNS", 3)  # past runs replayed to the planner, when a store exists
+MEMORY_RUNS = _int("MEMORY_RUNS", 3)  # RELEVANT past runs replayed, when a store exists
 MAX_ITERATIONS = _int("MAX_ITERATIONS", 2)  # hard cap on planner attempts (critic re-plans)
 
 # --- geofetch agent (beegent/pipeline/geofetch.py) ---------------------------
@@ -63,6 +63,10 @@ PROBE_TEXT_BYTES = _int("PROBE_TEXT_BYTES", 65_536)  # second read when the payl
 # tools/calibrate_relevance.py, and re-measure whenever EMBED_MODEL changes. Not
 # overridable: a float, which _int() neither handles nor needs.
 CATALOG_MIN_RELEVANCE = 0.30
+# Cosine a past run's use case must reach to be replayed. A SEPARATE number from the one
+# above: that compares a use case to a DATASET, this compares two use cases, and the two
+# distributions are not the same. Measured band (0.197, 0.721) on all-MiniLM-L6-v2.
+MEMORY_MIN_RELEVANCE = 0.45
 
 CONFIDENCE_BY_REPORT = {"high": 0.95, "medium": 0.8, "low": 0.7}
 CONFIDENCE_DEFAULT = 0.7

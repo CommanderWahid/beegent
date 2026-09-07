@@ -52,7 +52,7 @@ Two append-only tables, and stdlib `sqlite3` — no server, no extra dependency.
 
 | Table | Holds | Who reads it |
 |---|---|---|
-| `runs` | what was tried, and the critic's verdict | the planner, as `feedback`; the critic, as start URLs earlier runs already burned |
+| `runs` | what was tried, and the critic's verdict | the planner and the critic, both narrowed to the runs whose **use case** matches this one |
 | `links` | endpoints that were independently verified | the catalog stage |
 
 It closes a loop that used to leak: the critic's `replan` note was computed, used once and dropped,

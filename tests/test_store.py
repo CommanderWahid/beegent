@@ -208,7 +208,7 @@ def test_a_run_embeds_its_links_in_one_batched_call(tmp_path):
     store = SqliteStore(str(tmp_path / "m.db"), embed=counting)
     store.record_run(_run(candidates=[_verified("https://a.example/1.parquet"),
                                       _verified("https://a.example/2.parquet")]), [])
-    assert calls == [2], "one call, two texts"
+    assert calls == [3], "one call: the run's use case, then both links"
 
 
 def test_the_embedded_text_is_the_dataset_not_the_description(tmp_path):
@@ -224,7 +224,8 @@ def test_the_embedded_text_is_the_dataset_not_the_description(tmp_path):
     cand.title = "Fetch the Kadaster/PDOK OGC API Features endpoint"
     cand.dataset = "administrative boundaries, whole country"
     SqliteStore(str(tmp_path / "m.db"), embed=capture).record_run(_run(candidates=[cand]), [])
-    assert seen == ["administrative boundaries, whole country"]
+    # The run's use case leads the batch; the LINK's text is the dataset, never the description.
+    assert seen == ["land cover", "administrative boundaries, whole country"]
 
 
 # --- backfill: a model change invalidates every stored vector at once ---
@@ -287,3 +288,87 @@ def test_a_link_with_no_vector_is_not_an_embedded_link(tmp_path):
     store = SqliteStore(str(tmp_path / "m.db"))  # no embedder -> NULL vector
     store.record_run(_run(candidates=[_verified()]), [])
     assert store.embedded_links("any") == []
+
+
+# --- run memory is narrowed by USE CASE, not just by country ---
+
+
+def _embedder(mapping, name="fake"):
+    """Deterministic unit vectors: same key -> cosine 1.0, different key -> 0.0."""
+    def embed(texts):
+        return [normalise(mapping[t]) for t in texts]
+    embed.name = name
+    return embed
+
+
+AXES = {"land cover": [1.0, 0.0], "building footprints": [0.0, 1.0]}
+
+
+def test_a_run_about_another_use_case_is_not_replayed(tmp_path):
+    """A boundaries run fed dead URLs from a footprints run is noise, not memory."""
+    store = SqliteStore(str(tmp_path / "m.db"), embed=_embedder(AXES))
+    store.record_run(_run(), [{"url": "https://cover.example/", "failure_reason": "x"}])
+    store.record_run(DiscoveryRun(country="Atlantis", use_case="building footprints",
+                                  status="ok", totals={"total_tokens": 1}),
+                     [{"url": "https://footprints.example/", "failure_reason": "y"}])
+
+    prior = store.prior_runs("Atlantis", 3, "land cover")
+    assert [r["use_case"] for r in prior] == ["land cover"]
+    assert prior[0]["tried"][0]["url"] == "https://cover.example/"
+
+
+def test_matching_runs_are_still_newest_first(tmp_path):
+    """Relevance FILTERS; recency still ORDERS."""
+    store = SqliteStore(str(tmp_path / "m.db"), embed=_embedder(AXES))
+    store.record_run(_run(note="older"), [])
+    store.record_run(_run(country="Elsewhere", note="another country"), [])
+    store.record_run(_run(note="newer"), [])
+
+    prior = store.prior_runs("Atlantis", 3, "land cover")
+    assert [r["critic_note"] for r in prior] == ["newer", "older"]
+
+
+def test_the_cap_is_applied_after_the_filter(tmp_path):
+    """Filtering after the LIMIT would let irrelevant rows crowd out the relevant ones."""
+    store = SqliteStore(str(tmp_path / "m.db"), embed=_embedder(AXES))
+    for _ in range(4):  # four newer, irrelevant runs
+        store.record_run(DiscoveryRun(country="Atlantis", use_case="building footprints",
+                                      status="ok", totals={}), [])
+    store.record_run(_run(note="the one that matters"), [])
+
+    prior = store.prior_runs("Atlantis", 2, "land cover")
+    assert [r["critic_note"] for r in prior] == ["the one that matters"]
+
+
+def test_with_no_embedder_prior_runs_falls_back_to_pure_recency(tmp_path):
+    """Embeddings are optional; their absence must never drop a run."""
+    store = SqliteStore(str(tmp_path / "m.db"))  # no embedder at all
+    store.record_run(_run(note="a"), [])
+    store.record_run(DiscoveryRun(country="Atlantis", use_case="something else",
+                                  status="ok", critic_note="b", totals={}), [])
+
+    assert len(store.prior_runs("Atlantis", 3, "land cover")) == 2, "nothing filtered"
+
+
+def test_a_run_embedded_by_another_model_is_not_compared(tmp_path):
+    """A vector from another model is not comparable, and comparing anyway is nonsense."""
+    path = str(tmp_path / "m.db")
+    SqliteStore(path, embed=_embedder(AXES, name="old")).record_run(_run(), [])
+
+    store = SqliteStore(path, embed=_embedder(AXES, name="new"))
+    assert store.prior_runs("Atlantis", 3, "land cover") == [], "excluded, not scored"
+    assert [r["use_case"] for r in store.runs_needing_embedding("new")] == ["land cover"]
+
+
+def test_a_backfilled_run_becomes_matchable_again(tmp_path):
+    """This is the recovery path for an EMBED_MODEL change."""
+    path = str(tmp_path / "m.db")
+    SqliteStore(path, embed=_embedder(AXES, name="old")).record_run(_run(), [])
+
+    embed = _embedder(AXES, name="new")
+    store = SqliteStore(path, embed=embed)
+    for row in store.runs_needing_embedding("new"):
+        store.set_run_embedding(row["run_uid"], embed([row["use_case"]])[0], "new")
+
+    assert len(store.prior_runs("Atlantis", 3, "land cover")) == 1
+    assert store.runs_needing_embedding("new") == [], "re-running is idempotent"

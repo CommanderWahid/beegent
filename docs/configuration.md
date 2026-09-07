@@ -62,15 +62,26 @@ variable of the same name**, with the same precedence as the model variables —
 `MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value that is
 not a positive integer fails at startup rather than silently falling back.
 
-`CATALOG_MIN_RELEVANCE` (`0.30`) is the cosine a stored dataset must reach to be offered — measured
-with `tools/calibrate_relevance.py`, and re-measure it whenever `EMBED_MODEL` changes.
+Two similarity thresholds, both measured with `tools/calibrate_relevance.py` and both to be
+re-measured whenever `EMBED_MODEL` changes:
+
+- **`CATALOG_MIN_RELEVANCE`** (`0.30`) — the cosine a stored **dataset** must reach for its link to
+  be offered. Compares a use case to a dataset description.
+- **`MEMORY_MIN_RELEVANCE`** (`0.45`) — the cosine a past run's **use case** must reach for that run
+  to be replayed to the planner and the critic. Compares two use cases.
+
+They are separate numbers because they compare different kinds of text, and a single constant would
+be calibrated for neither. Without the second one, a country's most recent runs are replayed
+regardless of what they were about — a boundaries run fed dead URLs from a building-footprints run.
 
 Changing `EMBED_MODEL` also invalidates every vector already stored: they are excluded from matching
-rather than compared, so the catalog goes quiet until you run
+rather than compared, so the catalog goes quiet and run memory falls back to nothing until you run
 `uv run python -m tools.backfill_embeddings`.
 
-Three settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
-GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`.
+Five settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
+GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`, and
+the two similarity thresholds `CATALOG_MIN_RELEVANCE` / `MEMORY_MIN_RELEVANCE` — both are measured
+against a specific `EMBED_MODEL`, so a guessed override silently mis-filters rather than failing.
 
 ### Breadth and depth
 
@@ -81,7 +92,8 @@ GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `C
 | `BEEGENT_DB` | `~/.beegent/memory.db` | Cross-run memory. On by default; `""` disables it. `~` is expanded, so it works from `.env` too |
 | `CATALOG_FRESH_DAYS` | `7` | A stored link newer than this answers the run outright — no planner, no agent. `0` disables it |
 | `MAX_CATALOG_PROBES` | `3` | Stored links re-probed per run before any angle starts |
-| `MEMORY_RUNS` | `3` | Past runs for the same country replayed to the planner, when a store is configured |
+| `MEMORY_RUNS` | `3` | Past **relevant** runs replayed to the planner and critic, when a store is configured |
+| `MEMORY_MIN_RELEVANCE` | `0.45` | Cosine a past run's use case must reach to be replayed. Not overridable — measured, see `tools/calibrate_relevance.py` |
 | `MAX_ITERATIONS` | `2` | How many times the critic may send the run back to the planner |
 | `MAX_FINAL_CANDIDATES` | `3` | Cap on the candidate list |
 
@@ -137,7 +149,7 @@ Two scripts in `tools/`, neither part of the pipeline:
 | Command | What it does |
 |---|---|
 | `python -m tools.calibrate_relevance ["use case" ...]` | Scores your stored links against each query, prints the band the data implies, and suggests `CATALOG_MIN_RELEVANCE`. Re-run it whenever `EMBED_MODEL` changes |
-| `python -m tools.backfill_embeddings` | Embeds stored links with no vector, or one from a different model. Required after an `EMBED_MODEL` change, or the catalog goes quiet |
+| `python -m tools.backfill_embeddings` | Embeds stored **runs and links** with no vector, or one from a different model. Required after an `EMBED_MODEL` change, or the catalog goes quiet and run memory stops matching |
 
 `calibrate_relevance` exits non-zero when no single threshold satisfies every query, printing the
 conflicting bands rather than averaging them into a number that works for neither.

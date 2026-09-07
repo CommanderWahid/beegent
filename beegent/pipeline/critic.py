@@ -16,6 +16,8 @@ Exactly two decisions are available:
                          request is too vague/exotic to search for. Say why in one sentence.
 
 Do not choose "replan" just to try again; only if you can name a genuinely different route.
+Advice from earlier runs is shown as ALREADY SPENT, not as a suggestion: a route named there was
+tried and still failed, so repeating it is the one answer guaranteed to be wrong.
 
 Each candidate that made it through was resolved to a real file and independently probed, so
 a thin result means the ANGLES were wrong, not that the verification was too strict. Angles
@@ -50,6 +52,7 @@ def run_critic(
     unresolved: list[Candidate],
     gate_reason: str,
     tried_before: list[str] | None = None,
+    prior_advice: str = "",
 ) -> dict:
     """Run the critic LLM to decide what to do next."""
     tried = "\n".join(f"- {a.description} (channel: {a.channel_hint})" for a in angles)
@@ -71,6 +74,9 @@ def run_critic(
     # Without this the critic cannot satisfy its own "name a genuinely different route" -
     # it has nothing to be different from, and repeats the same advice run after run.
     before = "\n".join(f"- {u}" for u in (tried_before or [])) or "(none)"
+    # Not just the URLs: without the REASONS, and without seeing its own past advice fail,
+    # the critic recommends the same publisher run after run.
+    learned = prior_advice or "(no earlier run for this country and use case)"
     failed = ""
     try:
         # Usage discarded - see the note in planner.py:plan().
@@ -85,6 +91,8 @@ def run_critic(
                         f"Angles tried:\n{tried}\n\nVerified downloads found:\n{found}\n\n"
                         f"Angles that dead-ended:\n{dead}\n\n"
                         f"Start URLs already tried in this run and earlier ones:\n{before}"
+                        f"\n\nWhat earlier runs already learned - advice ALREADY given, and "
+                        f"routes that already failed:\n{learned}"
                         f"\n\nWhy this was escalated: {gate_reason}"
                     ),
                 },
