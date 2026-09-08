@@ -118,15 +118,14 @@ needed** — search is a keyless DuckDuckGo → Bing chain, and the default LLM 
 
 ## Documentation
 
-| | |
-|---|---|
-| [Getting started](docs/getting-started.md) | Install, first run, reading the result |
-| [Configuration](docs/configuration.md) | Every setting, CLI flags, precedence |
-| [Backends](docs/backends.md) | Ollama, Groq, Mistral, Databricks, writing a connector |
-| [Architecture](docs/architecture.md) | The seven steps, the store, and how a run flows |
-| [The geofetch agent](docs/geofetch.md) | The agent loop, its tools, the seven guardrails |
-| [Output schema](docs/output-schema.md) | `candidate_list.json`, field by field |
-| [Context management](docs/performance.md) | What occupies the context window, what it costs, and what memory saves |
+- [Getting started](docs/getting-started.md) — install, first run, reading the result
+- [Configuration](docs/configuration.md) — every setting, CLI flags, precedence
+- [Backends](docs/backends.md) — Ollama, Groq, Mistral, Databricks, writing a connector
+- [Architecture](docs/architecture.md) — the seven steps, the store, and how a run flows
+- [The geofetch agent](docs/geofetch.md) — the agent loop, its tools, the seven guardrails
+- [Output schema](docs/output-schema.md) — `candidate_list.json`, field by field
+- [Context management](docs/performance.md) — what occupies the context window, what it costs, and
+  what memory saves
 
 ## Status
 
