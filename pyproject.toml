@@ -1,13 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "beegent"
 version = "0.1.0"
 description = "Multi-agent pipeline that turns (country, use_case) into verified geospatial download URLs"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Wahid Atoui" }]
 requires-python = ">=3.10"
+keywords = ["geospatial", "gis", "agents", "llm", "data-discovery", "ogc"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
 dependencies = [
     "openai>=1.40",
     "requests>=2.31",
     "python-dotenv>=1.0",
 ]
+
+# Without this, a flat layout makes the backend discover assets/ as a package too.
+[tool.hatch.build.targets.wheel]
+packages = ["beegent"]
+
+[project.urls]
+Homepage = "https://github.com/CommanderWahid/beegent"
+Documentation = "https://github.com/CommanderWahid/beegent/blob/main/docs/README.md"
+Issues = "https://github.com/CommanderWahid/beegent/issues"
+
+[project.scripts]
+beegent = "beegent.run:main"
 
 [project.optional-dependencies]
 # Local catalog matching. Optional: without it links are stored with NULL vectors.
@@ -22,3 +51,11 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 99  # the package's actual maximum
+
+[tool.ruff.lint]
+# F catches real errors; ERA catches commented-out code. Configured here so CI and a
+# developer's bare `ruff check` cannot disagree about what counts as a finding.
+select = ["F", "ERA"]

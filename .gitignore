@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 candidate_list.json
 .env
+dist/

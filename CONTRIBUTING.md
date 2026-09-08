@@ -1,0 +1,55 @@
+# Contributing
+
+```bash
+uv sync
+uv run pytest          # 303 cases, ~1s
+uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
+```
+
+Both run in CI on Python 3.10, 3.11 and 3.12.
+
+## The suite is offline by intent
+
+No network, no API key, no LLM — so you can work on the agent loop without spending a token, and
+**a test that reaches the network is a bug**. Two things make that hold, and both are worth knowing
+before you add a test:
+
+- `WebTools` takes an injectable `transport`. The whole agent loop is exercised against a synthetic
+  portal defined in `tests/conftest.py`.
+- An autouse fixture blanks `config.BEEGENT_DB`, so no test touches your real
+  `~/.beegent/memory.db` or loads an embedding model.
+
+`tests/` mirrors the package, one file per module under test. Per-test state is a **fixture**;
+the synthetic-portal data is module-level and imported by name (`from tests.conftest import PORTAL`)
+because it is a constant, not state.
+
+## Conventions
+
+- **Comments and docstrings are one short line.** Rationale belongs in the docs, not in the code.
+- **Cross-module imports are absolute and fully qualified** — `from beegent import config`, never
+  relative dots.
+- **Nothing may hardcode a vendor, portal hostname or country.** Beegent has to work for any
+  `(country, use_case)` on earth, and a portal table is always one country behind the next request.
+  This is enforced by construction: the agent tests run against a fictional country, so anything
+  real that crept into the harness would break them.
+- **Pipeline tunables go in `beegent/config.py`**, not inline. Backend-specific things — model
+  names, base URLs, credentials — belong to the connector that owns them.
+
+## Adding an LLM backend
+
+Subclass `OpenAICompatConnector` (or `LLMConnector` for a different wire format) in
+`beegent/connectors/`, add one entry to the `CONNECTORS` registry, and implement `validate()` so a
+bad credential fails before the run starts rather than mid-angle after tokens are spent. See
+[docs/backends.md](docs/backends.md); `databricks.py` is the worked example.
+
+## What not to change without measuring
+
+Several values look arbitrary and are not — they carry findings from real runs, recorded in
+[docs/configuration.md](docs/configuration.md) and [docs/performance.md](docs/performance.md).
+The similarity thresholds in particular are **measured against a specific `EMBED_MODEL`**, and a
+cosine is not a percentage. If you change the embedding model, the run will tell you the thresholds
+no longer fit.
+
+The verification guarantee is the point of the project: every `resource_url` in the output was
+independently re-probed by the harness. `_handle_report()`'s guardrails are all load-bearing and all
+covered by tests — see [docs/geofetch.md](docs/geofetch.md) before touching them.
