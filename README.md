@@ -28,8 +28,20 @@ magic bytes matching the format that was asked for. A URL the model invented, or
 
 ## What a run looks like
 
-One angle resolving against a live French government portal, from the start URL to a verified
-file in five steps:
+A run asks what it already knows before it plans anything:
+
+```
+[input]  country=France  use-case='building footprints as a geoparquet file'
+[config] backend=ollama  planner=deepseek-r1:14b  geofetch=qwen3:8b  critic=deepseek-r1:14b
+[catalog] querying catalogs
+[memory] 2 previous run(s) matching this use case
+
+=== iteration 1/2 ===
+[plan] 1 angle(s)
+  - [national_geoportal] cadastral building footprints from the national open-data portal
+```
+
+Then one agent per angle — here, start URL to verified file in five steps:
 
 ```
     [geofetch] task: url      = https://cadastre.data.gouv.fr/data/etalab-cadastre/latest/
@@ -61,6 +73,22 @@ national file, and probed it. The harness then re-probed that URL itself before 
 
 `50415231` is `PAR1` — the four bytes that begin every Parquet file. That is the proof, read off
 the wire.
+
+### Ask again, and it costs nothing
+
+The run stored that link. A later request for the same thing is matched by meaning, re-probed, and
+answered before the planner is ever called:
+
+```
+[catalog] querying catalogs
+  [catalog] 1/3 stored link(s) match this use case
+  [catalog] 0.716 building footprints, whole France
+[catalog] answered from memory - 1 link(s), no LLM call
+```
+
+Measured at **0 tokens in 0.7s**, against ~90,000 tokens to find it from scratch. The link is still
+re-probed every time, so the saving is in model calls, never in verification — and a stored link
+only answers outright while it is recent, so the pipeline still rediscovers periodically.
 
 ## Why
 
