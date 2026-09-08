@@ -152,27 +152,37 @@ def test_request_budget_enforced(tools):
 # --- feature services: 16 magic bytes cannot tell one from an error page ---
 
 
-def test_oapif_reports_an_exact_count_from_number_matched(tools):
-    """numberMatched sits after the features array, so this is the whole point of the 2nd read."""
-    probe = tools.probe_url(OAPIF_ITEMS)
-    assert probe["access"] == "api"
-    assert probe["shape"] == "geojson_featurecollection"
-    assert probe["feature_count"] == 4212
-    assert probe["count_is_exact"]
-    assert probe["geometry_type"] == "Polygon"
+#: One row per payload family. classify_api_shape() keys on STRUCTURE, never on the vendor
+#: that served it, so a table is the honest way to say "these are the shapes we recognise".
+SHAPES = [
+    # numberMatched sits AFTER the features array - the whole point of the second read.
+    pytest.param(OAPIF_ITEMS, {"access": "api", "shape": "geojson_featurecollection",
+                               "feature_count": 4212, "count_is_exact": True,
+                               "geometry_type": "Polygon",
+                               # one page's content-length is not the dataset's size
+                               "total_size_bytes": None}, id="oapif-exact-count"),
+    # Without numberMatched the page length is a lower bound and must say so.
+    pytest.param(OAPIF_NO_COUNT, {"shape": "geojson_featurecollection", "feature_count": 2,
+                                  "count_is_exact": False,
+                                  "geometry_type": "LineString"}, id="oapif-page-count"),
+    # Recognised and counted at zero; the report guardrail is what rejects it.
+    pytest.param(OAPIF_EMPTY, {"shape": "geojson_featurecollection",
+                               "feature_count": 0}, id="empty-collection"),
+    pytest.param(WFS_CAPS_URL, {"shape": "wfs_capabilities",
+                                "feature_count": 0}, id="wfs-capabilities"),
+    pytest.param(ESRI_QUERY_URL, {"shape": "esrijson_featureset",
+                                  # esriGeometryPolygon must be normalised to the OGC name
+                                  "geometry_type": "Polygon",
+                                  # exceededTransferLimit means the count is capped
+                                  "count_is_exact": False}, id="esri-featureset"),
+]
 
 
-def test_a_page_count_is_reported_as_not_exact(tools):
-    """Without numberMatched, the page length is a lower bound and must say so."""
-    probe = tools.probe_url(OAPIF_NO_COUNT)
-    assert probe["feature_count"] == 2
-    assert not probe["count_is_exact"], "a page count must never look like a total"
-    assert probe["geometry_type"] == "LineString"
+@pytest.mark.parametrize("url,expected", SHAPES)
+def test_a_service_reply_is_classified_by_its_structure(url, expected, tools):
+    probe = tools.probe_url(url)
+    assert {k: probe.get(k) for k in expected} == expected
 
-
-def test_total_size_bytes_is_null_for_a_service(tools):
-    """One page's content-length is not the dataset's size."""
-    assert tools.probe_url(OAPIF_ITEMS)["total_size_bytes"] is None
 
 
 def test_an_error_served_with_http_200_is_not_data(tools):
@@ -182,26 +192,6 @@ def test_an_error_served_with_http_200_is_not_data(tools):
     assert not probe["ok"]
     assert probe.get("shape") is None
     assert probe["access"] == "file", "nothing identified it as a service"
-
-
-def test_an_empty_feature_collection_is_still_parsed(tools):
-    """Recognised, counted at zero - the report guardrail is what rejects it."""
-    probe = tools.probe_url(OAPIF_EMPTY)
-    assert probe["shape"] == "geojson_featurecollection"
-    assert probe["feature_count"] == 0
-
-
-def test_wfs_capabilities_is_recognised_as_metadata(tools):
-    probe = tools.probe_url(WFS_CAPS_URL)
-    assert probe["shape"] == "wfs_capabilities"
-    assert probe["feature_count"] == 0
-
-
-def test_esri_json_maps_its_geometry_names_to_ogc(tools):
-    probe = tools.probe_url(ESRI_QUERY_URL)
-    assert probe["shape"] == "esrijson_featureset"
-    assert probe["geometry_type"] == "Polygon", "esriGeometryPolygon must be normalised"
-    assert not probe["count_is_exact"], "exceededTransferLimit means the count is capped"
 
 
 def test_a_static_geojson_file_is_not_an_api(make_tools):

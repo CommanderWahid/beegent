@@ -231,12 +231,6 @@ def test_the_embedded_text_is_the_dataset_not_the_description(tmp_path):
 # --- backfill: a model change invalidates every stored vector at once ---
 
 
-def test_links_with_no_vector_need_embedding(tmp_path):
-    store = SqliteStore(str(tmp_path / "m.db"))  # no embedder -> NULL vectors
-    store.record_run(_run(candidates=[_verified()]), [])
-    assert len(store.links_needing_embedding("any-model")) == 1
-
-
 def test_a_model_change_invalidates_every_stored_vector(tmp_path):
     """The realistic trigger: not missing vectors, but EMBED_MODEL moving under them."""
     store = SqliteStore(str(tmp_path / "m.db"), embed=_fake_embed("model-a"))
@@ -246,6 +240,7 @@ def test_a_model_change_invalidates_every_stored_vector(tmp_path):
 
 
 def test_setting_an_embedding_makes_the_link_matchable(tmp_path):
+    """Also the idempotence check: a second pass finds nothing left to do."""
     store = SqliteStore(str(tmp_path / "m.db"))
     store.record_run(_run(candidates=[_verified()]), [])
     todo = store.links_needing_embedding("model-a")
@@ -254,15 +249,6 @@ def test_setting_an_embedding_makes_the_link_matchable(tmp_path):
     link = store.verified_links("Atlantis")[0]
     assert link["embed_model"] == "model-a"
     assert from_blob(link["embedding"]) == [1.0, 0.0]
-
-
-def test_backfill_is_idempotent(tmp_path):
-    """Safe to re-run: the second pass finds nothing, which is how you verify it worked."""
-    store = SqliteStore(str(tmp_path / "m.db"))
-    store.record_run(_run(candidates=[_verified()]), [])
-    for row in store.links_needing_embedding("m"):
-        store.set_embedding(row["link_uid"], normalise([1.0, 0.0]), "m")
-    assert store.links_needing_embedding("m") == []
 
 
 def test_memory_is_on_by_default(monkeypatch, tmp_path):
@@ -358,20 +344,6 @@ def test_a_run_embedded_by_another_model_is_not_compared(tmp_path):
     store = SqliteStore(path, embed=_embedder(AXES, name="new"))
     assert store.prior_runs("Atlantis", 3, "land cover") == [], "excluded, not scored"
     assert [r["use_case"] for r in store.runs_needing_embedding("new")] == ["land cover"]
-
-
-def test_a_backfilled_run_becomes_matchable_again(tmp_path):
-    """This is the recovery path for an EMBED_MODEL change."""
-    path = str(tmp_path / "m.db")
-    SqliteStore(path, embed=_embedder(AXES, name="old")).record_run(_run(), [])
-
-    embed = _embedder(AXES, name="new")
-    store = SqliteStore(path, embed=embed)
-    for row in store.runs_needing_embedding("new"):
-        store.set_run_embedding(row["run_uid"], embed([row["use_case"]])[0], "new")
-
-    assert len(store.prior_runs("Atlantis", 3, "land cover")) == 1
-    assert store.runs_needing_embedding("new") == [], "re-running is idempotent"
 
 
 # --- a model change repairs itself at the start of the next run ---

@@ -2,7 +2,7 @@
 
 ```bash
 uv sync
-uv run pytest          # 303 cases, ~1s
+uv run pytest          # 293 cases, ~1s
 uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
 ```
 
@@ -11,13 +11,17 @@ Both run in CI on Python 3.10, 3.11 and 3.12.
 ## The suite is offline by intent
 
 No network, no API key, no LLM — so you can work on the agent loop without spending a token, and
-**a test that reaches the network is a bug**. Two things make that hold, and both are worth knowing
-before you add a test:
+**a test that reaches the network is a bug**. This is enforced, not merely intended:
 
+- An autouse fixture blocks `socket.connect`, so a test that opens a connection fails with
+  *"a test tried to reach the network"* rather than passing on your machine and failing in CI.
+  (It cannot reach a subprocess, so a test that spawns one must stub its own dependencies.)
 - `WebTools` takes an injectable `transport`. The whole agent loop is exercised against a synthetic
   portal defined in `tests/conftest.py`.
-- An autouse fixture blanks `config.BEEGENT_DB`, so no test touches your real
+- Another autouse fixture blanks `config.BEEGENT_DB`, so no test touches your real
   `~/.beegent/memory.db` or loads an embedding model.
+
+If your test needs a connector, stub its `validate()` — that method exists to ping a live endpoint.
 
 `tests/` mirrors the package, one file per module under test. Per-test state is a **fixture**;
 the synthetic-portal data is module-level and imported by name (`from tests.conftest import PORTAL`)

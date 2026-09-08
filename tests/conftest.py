@@ -3,6 +3,8 @@
 import json
 import os
 
+import socket
+
 import pytest
 
 from beegent import config, llm
@@ -219,6 +221,22 @@ ANGLE = SearchAngle(
 
 
 # --- fixtures ---
+
+
+@pytest.fixture(autouse=True)
+def _no_network():
+    """Offline is a PROPERTY of this suite, not a hope: a socket here is a bug, not a slow test.
+
+    Manual save/restore rather than monkeypatch, for the same teardown-ordering reason as below.
+    """
+    real = socket.socket.connect
+
+    def blocked(self, address, *a, **kw):
+        raise AssertionError(f"a test tried to reach the network: {address}")
+
+    socket.socket.connect = blocked
+    yield
+    socket.socket.connect = real
 
 
 @pytest.fixture(autouse=True)
