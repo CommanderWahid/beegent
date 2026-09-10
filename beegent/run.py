@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from typing import Callable
 
 from beegent import config
 from beegent.connectors import CONNECTORS, LLMConnector
@@ -112,7 +113,63 @@ def _finalize(run: DiscoveryRun, store: Store, tried: list[dict]) -> DiscoveryRu
     return run
 
 
-def discover(country: str, use_case: str, store: Store | None = None) -> DiscoveryRun:
+def log_summary(run: DiscoveryRun, log: Callable[[str], None] = _log.info,
+                seconds: float | None = None) -> None:
+    """What the run cost and found. Shared, so the CLI and the UI cannot drift."""
+    took = f" ({seconds:.0f}s)" if seconds is not None else ""
+    log(f"\n--- summary{took} ---")
+    log(f"status:     {run.status}")
+    log(f"iterations: {run.iteration}/{run.max_iterations}")
+    log(f"candidates: {len(run.candidates)}")
+    verified = sum(1 for c in run.candidates if c.verification)
+    log(f"verified:   {verified}/{len(run.candidates)} independently probed")
+    if run.unresolved:
+        log(f"unresolved: {len(run.unresolved)} angle(s) found no verifiable download")
+        for cand in run.unresolved:
+            why = str(cand.claim.get("failure_reason", ""))[:80]
+            log(f"            {cand.url} - {why}")
+    if run.candidates:
+        top = run.candidates[0]
+        log(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
+        log(f"            resource: {top.resource_url or 'none identified'}")
+        if top.verification:
+            log(
+                f"            probed:   HTTP {top.verification.get('status')} "
+                f"{top.verification.get('payload_type')} "
+                f"({top.verification.get('first_bytes_hex')})"
+            )
+    if run.reason:
+        log(f"reason:     {run.reason}")
+    t = run.totals
+    log(
+        f"cost:       {t['angles_run']} angle(s), {t['http_requests']} request(s), "
+        f"{t['total_tokens']:,} tokens "
+        f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
+    )
+    if t["cached_tokens"]:  # silent on a backend that reports no cache hits at all
+        share = 100 * t["cached_tokens"] / (t["prompt_tokens"] or 1)
+        log(f"cached:     {t['cached_tokens']:,} of the input tokens ({share:.0f}%)")
+    # Where the tokens went, biggest spender first.
+    by_role = t.get("by_role") or {}
+    if by_role:
+        parts = "  |  ".join(
+            f"{role} {b['total_tokens']:,}"
+            for role, b in sorted(by_role.items(),
+                                  key=lambda kv: kv[1]["total_tokens"], reverse=True)
+        )
+        log(f"            {parts}")
+
+
+def _stopped(run: DiscoveryRun, store: Store, tried: list[dict]) -> DiscoveryRun:
+    """A user stop is an EXIT, not a failure - keep what was verified and what it cost."""
+    run.status = "stopped"
+    run.reason = "stopped by the user"
+    _log.info("[stop] cancelled by the user")
+    return _finalize(run, store, tried)
+
+
+def discover(country: str, use_case: str, store: Store | None = None,
+             should_stop: Callable[[], bool] = lambda: False) -> DiscoveryRun:
     connector = get_connector()
     store = store if store is not None else make_store()
     run = DiscoveryRun(
@@ -160,6 +217,8 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
     tried: list[dict] = []  # every angle start URL, ACROSS iterations
     carried: list[Candidate] = []  # survivors from earlier iterations
     for iteration in range(1, config.MAX_ITERATIONS + 1):
+        if should_stop():
+            return _stopped(run, store, tried)
         run.iteration = iteration
         _log.info(f"\n=== iteration {iteration}/{config.MAX_ITERATIONS} ===")
 
@@ -184,9 +243,12 @@ def discover(country: str, use_case: str, store: Store | None = None) -> Discove
         fresh: list[Candidate] = []
         misses: list[Candidate] = []
         for i, angle in enumerate(angles, 1):
+            if should_stop():
+                run.candidates = _rank(carried + list(catalog_hits) + fresh)
+                return _stopped(run, store, tried)
             _log.info(f"[geofetch] angle {i}/{len(angles)}: {angle.description}")
             try:
-                found, missed = resolve_angle(angle)
+                found, missed = resolve_angle(angle, should_stop=should_stop)
             except Exception as exc:  # one bad angle must not kill the run
                 _log.info(f"    [geofetch] failed: {exc}")
                 found = missed = None
@@ -294,47 +356,7 @@ def main() -> None:
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(run.to_dict(), fh, indent=2, ensure_ascii=False)
 
-    _log.info(f"\n--- summary ({time.time() - started:.0f}s) ---")
-    _log.info(f"status:     {run.status}")
-    _log.info(f"iterations: {run.iteration}/{run.max_iterations}")
-    _log.info(f"candidates: {len(run.candidates)}")
-    verified = sum(1 for c in run.candidates if c.verification)
-    _log.info(f"verified:   {verified}/{len(run.candidates)} independently probed")
-    if run.unresolved:
-        _log.info(f"unresolved: {len(run.unresolved)} angle(s) found no verifiable download")
-        for cand in run.unresolved:
-            why = str(cand.claim.get("failure_reason", ""))[:80]
-            _log.info(f"            {cand.url} - {why}")
-    if run.candidates:
-        top = run.candidates[0]
-        _log.info(f"top pick:   {top.title}\n            {top.url} [{top.source}]")
-        _log.info(f"            resource: {top.resource_url or 'none identified'}")
-        if top.verification:
-            _log.info(
-                f"            probed:   HTTP {top.verification.get('status')} "
-                f"{top.verification.get('payload_type')} "
-                f"({top.verification.get('first_bytes_hex')})"
-            )
-    if run.reason:
-        _log.info(f"reason:     {run.reason}")
-    t = run.totals
-    _log.info(
-        f"cost:       {t['angles_run']} angle(s), {t['http_requests']} request(s), "
-        f"{t['total_tokens']:,} tokens "
-        f"({t['prompt_tokens']:,} in / {t['completion_tokens']:,} out)"
-    )
-    if t["cached_tokens"]:  # silent on a backend that reports no cache hits at all
-        share = 100 * t["cached_tokens"] / (t["prompt_tokens"] or 1)
-        _log.info(f"cached:     {t['cached_tokens']:,} of the input tokens ({share:.0f}%)")
-    # Where the tokens went, biggest spender first.
-    by_role = t.get("by_role") or {}
-    if by_role:
-        parts = "  |  ".join(
-            f"{role} {b['total_tokens']:,}"
-            for role, b in sorted(by_role.items(),
-                                  key=lambda kv: kv[1]["total_tokens"], reverse=True)
-        )
-        _log.info(f"            {parts}")
+    log_summary(run, seconds=time.time() - started)
     _log.info(f"written to: {args.out}")
 
 

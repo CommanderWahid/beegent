@@ -1,0 +1,90 @@
+<div class="shell">
+  <aside>
+    <header>
+      <img src="beegent_logo.svg" alt="" width="38" height="38" />
+      <div>
+        <h1>Beegent</h1>
+        <p>verified geospatial data</p>
+      </div>
+    </header>
+
+    <nav>
+      <p class="label">Catalog</p>
+      <button class="row" [class.on]="mode() === 'catalog' && country() === ''" (click)="pick('')">
+        <span>All countries</span><em>{{ total() }}</em>
+      </button>
+      @for (c of countries(); track c.country) {
+        <button class="row" [class.on]="mode() === 'catalog' && country() === c.country"
+                (click)="pick(c.country)">
+          <span>{{ c.country }}</span><em>{{ c.links }}</em>
+        </button>
+      }
+      @if (!countries().length) { <p class="empty">Nothing stored yet.</p> }
+    </nav>
+  </aside>
+
+  <main [class.blank]="blank()">
+    @if (!blank()) {
+      <section class="pane">
+        @switch (mode()) {
+          @case ('chat') {
+            <chat-pane [messages]="messages()" [busy]="busy()" [run]="run()"
+                       [waited]="waited()" [model]="chatModel()"
+                       (start)="start($event)" (openCatalog)="pick($event)"
+                       (openLogs)="mode.set('logs')" />
+          }
+          @case ('catalog') {
+            <catalog-pane [links]="catalog()" [country]="country()"
+                          [loading]="catalogLoading()" (ask)="mode.set('chat')" />
+          }
+          @case ('logs') { <log-pane [lines]="log()" /> }
+        }
+      </section>
+    }
+
+    <div class="dock">
+      @if (blank()) {
+        <div class="hero">
+          <h2><img src="beegent_logo.svg" alt="" width="64" height="64" />What data do you need?</h2>
+          <p class="lede" [innerHTML]="greetingLead()"></p>
+          <button class="what" [title]="greetingPlain()" (click)="details.set(!details())">
+            ⓘ {{ details() ? 'Hide the details' : 'What I need' }} {{ details() ? '▴' : '▾' }}
+          </button>
+          @if (details()) { <div class="detail" [innerHTML]="greetingRest()"></div> }
+        </div>
+      }
+
+      <form (submit)="send($event)">
+        <textarea rows="2" [value]="draft()" (input)="draft.set($any($event.target).value)"
+                  (keydown)="key($event)" [disabled]="locked()"
+                  [placeholder]="running() ? 'Working — the agent is running…'
+                                 : 'A use case and a country — “flood-response boundaries for Kenya”'"></textarea>
+        <footer>
+          <span class="hint">Enter to send · Shift+Enter for a new line</span>
+          @if (locked()) {
+            <button type="button" class="stop" (click)="stop()" aria-label="Stop"></button>
+          } @else {
+            <button type="submit" [disabled]="!draft().trim()" aria-label="Send">↑</button>
+          }
+        </footer>
+      </form>
+
+      <div class="modes">
+        <button class="seg" [class.on]="mode() === 'chat'" (click)="mode.set('chat')">Chat</button>
+        <button class="seg" [class.on]="mode() === 'catalog'"
+                (click)="pick(country())">Catalog</button>
+        <button class="seg" [class.on]="mode() === 'logs'" (click)="mode.set('logs')">
+          Logs @if (running()) { <i class="live"></i> }
+        </button>
+      </div>
+
+      @if (resolved(); as c) {
+        <p class="resolved" [title]="'planner=' + c.models['planner']
+                                     + ' · geofetch=' + c.models['geofetch']
+                                     + ' · critic=' + c.models['critic']">
+          {{ c.backend }} · {{ c.models['planner'] }}
+        </p>
+      }
+    </div>
+  </main>
+</div>

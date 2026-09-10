@@ -2,7 +2,7 @@
 
 ```bash
 uv sync
-uv run pytest          # 293 cases, ~1s
+uv run pytest          # 326 cases, ~2s
 uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
 ```
 
@@ -57,3 +57,29 @@ no longer fit.
 The verification guarantee is the point of the project: every `resource_url` in the output was
 independently re-probed by the harness. `_handle_report()`'s guardrails are all load-bearing and all
 covered by tests — see [docs/geofetch.md](docs/geofetch.md) before touching them.
+
+## The web UI
+
+`api/` (FastAPI) and `ui/` (Angular) are **pure consumers**: they call `discover()`, read
+`SqliteStore`, and render `candidate_list.json`. The dependency runs one way only — `beegent/`
+must never import them, and `grep -rn "from api" beegent/` returning nothing is part of the
+check. The moment the UI re-implements ranking, confidence or verification, the guarantee has two
+implementations and they will drift.
+
+For development, run the two halves separately so both reload:
+
+```bash
+LLM_BACKEND=groq uv run uvicorn api.main:app --reload --port 8000
+cd ui && npx ng serve          # :4200, proxies /api across
+```
+
+`uv run beegent-ui` does **not** reload: it holds the modules it imported at start, so an edit to
+`api/` or `beegent/` does nothing until you restart it — a changed prompt or log line looks
+missing when the process is simply older than the code. The trade with `--reload` is that
+`main()` never runs, so you lose the startup `validate()` and the `[config]` line;
+`GET /api/config` still answers.
+
+Two things there that look like detail and are not. The API allows **one run at a time**, because
+`discover()` interleaves store writes and Ollama serves one call at a time. And the log stream is
+an SSE tap on the existing `logging` calls — do not invent a structured event protocol; if you
+need one, `resolve_angle(angle, log=...)` already takes a callable.

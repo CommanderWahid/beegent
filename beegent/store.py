@@ -214,6 +214,26 @@ class SqliteStore:
             ).fetchall()
         return [dict(r) | {"claim": json.loads(r["claim"])} for r in rows]
 
+    def catalog(self, country: str = "") -> list[dict]:
+        """Every link's NEWEST row, rot included - for READING, not for matching.
+
+        verified_links() is the matching input: it drops rot and carries the vectors. This
+        carries `verification` and `status` instead, which is what a reader needs to see.
+        """
+        where = "WHERE country = ?" if country else ""
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT link_uid, country, dataset, url, resource_url, verification, claim, "
+                "confidence, last_verified, status FROM (SELECT *, ROW_NUMBER() OVER ("
+                "  PARTITION BY resource_url ORDER BY last_verified DESC, rowid DESC) AS rn "
+                f"  FROM links {where}) "
+                # Same newest-row-wins rule; the status is shown rather than filtered on.
+                "WHERE rn = 1 ORDER BY last_verified DESC",
+                (country,) if country else (),
+            ).fetchall()
+        return [dict(r) | {"claim": json.loads(r["claim"]),
+                           "verification": json.loads(r["verification"])} for r in rows]
+
     def embedded_links(self, model: str) -> list[dict]:
         """Every link comparable against THIS model - filtered in SQL, never in Python."""
         with self._connect() as db:

@@ -30,6 +30,11 @@ uv run python -m beegent.run --country France --use-case "..." \
 Overriding one role leaves the others alone. The run banner and `candidate_list.json` both record
 what was actually used, so you never have to reconstruct it.
 
+**Row 1 exists only for `python -m beegent.run`.** The web UI (`beegent-ui`) has no flags, so it
+starts at row 2 — `LLM_BACKEND` and the three `*_MODEL` variables are its whole surface, from the
+environment or `.env`. It logs what resolved at startup and serves the same answer at
+`GET /api/config`.
+
 ## Command-line options
 
 | Flag | Default | Meaning |

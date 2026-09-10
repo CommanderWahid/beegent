@@ -64,6 +64,27 @@ Defaults: `databricks-claude-sonnet-5` (planner) · `databricks-claude-sonnet-4-
 These are **serving-endpoint names, not model names**. A 404 almost always means the endpoint is
 not called that in your workspace — check `GET /api/2.0/serving-endpoints`.
 
+## Choosing a backend for the web UI
+
+`beegent-ui` takes no command-line flags. It reads the same environment as everything else, so a
+backend is one variable — set it inline or put `LLM_BACKEND=…` in `.env`:
+
+```bash
+LLM_BACKEND=groq       uv run beegent-ui
+LLM_BACKEND=databricks uv run beegent-ui
+PLANNER_MODEL=qwen3:8b uv run beegent-ui   # still Ollama, but a lighter chat
+```
+
+The chat front door uses the **planner** role, so `PLANNER_MODEL` is what decides whether the
+first message answers in seconds or in minutes. On Ollama that role defaults to `deepseek-r1:14b`
+— a 14B reasoning model doing a one-line classification, which is why a hosted backend feels so
+much quicker there.
+
+`connector.validate()` runs before the server binds, so a missing key or an endpoint name that
+does not exist in your workspace fails at startup instead of hanging the first message. The
+resolved backend and models are logged as `[config] backend=… planner=…` and served by
+`GET /api/config`.
+
 ## Models need tuning
 
 The defaults above are a starting point, not a recommendation. Swap them per role with

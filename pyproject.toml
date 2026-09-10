@@ -28,7 +28,7 @@ dependencies = [
 
 # Without this, a flat layout makes the backend discover assets/ as a package too.
 [tool.hatch.build.targets.wheel]
-packages = ["beegent"]
+packages = ["beegent", "api"]
 
 [project.urls]
 Homepage = "https://github.com/CommanderWahid/beegent"
@@ -37,10 +37,13 @@ Issues = "https://github.com/CommanderWahid/beegent/issues"
 
 [project.scripts]
 beegent = "beegent.run:main"
+beegent-ui = "api.main:main"
 
 [project.optional-dependencies]
 # Local catalog matching. Optional: without it links are stored with NULL vectors.
 embeddings = ["fastembed>=0.4"]
+# The local web UI's backend. Not the pipeline's business, so not a runtime dependency.
+api = ["fastapi>=0.115", "uvicorn>=0.30", "pycountry>=24.0"]
 
 [dependency-groups]
 dev = [

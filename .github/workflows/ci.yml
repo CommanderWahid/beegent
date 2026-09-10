@@ -27,3 +27,21 @@ jobs:
       - run: uv run pytest
 
       - run: uvx ruff check .
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+        working-directory: ui
+
+      # The Angular app is a pure consumer, so a build is the whole check: it must compile
+      # against the API's types without the backend running.
+      - run: npx ng build --configuration production
+        working-directory: ui

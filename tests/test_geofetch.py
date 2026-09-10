@@ -703,3 +703,12 @@ def test_a_candidate_carries_the_angles_dataset(run_stage):
     found, _ = run_stage(list(HAPPY_PATH))
     assert found.dataset == ANGLE.dataset
     assert found.title == ANGLE.description, "title is unchanged"
+
+
+def test_a_user_stop_ends_the_agent_and_keeps_what_it_cost(make_tools):
+    """Like a spent budget: deterministic exit, cost intact - never a vanished angle."""
+    agent = GeofetchAgent(tools=build_tools(), should_stop=lambda: True)
+    result = agent.run(start_url=PORTAL, dataset="boundaries", fmt="GeoPackage")
+    assert not result.found
+    assert result.report["failure_reason"] == "stopped by the user"
+    assert result.steps_used == 0 and result.usage.total_tokens == 0

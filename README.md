@@ -116,6 +116,27 @@ planner -> catalogs -> geofetch (per angle) -> gate -> critic -> (replan | needs
 Nothing in the codebase knows about any specific portal, vendor or country, and **no API key is
 needed** — search is a keyless DuckDuckGo → Bing chain, and the default LLM backend runs locally.
 
+## A web UI, if you prefer one
+
+```bash
+uv sync --extra api --extra embeddings
+cd ui && npm ci && npx ng build && cd ..
+uv run beegent-ui                      # http://127.0.0.1:8000
+LLM_BACKEND=groq uv run beegent-ui     # or any other backend
+```
+
+An agent that asks what you need, a catalog of everything already verified, and the run's log
+streamed live while it works. It requires a **use case and a real country** before it will spend
+anything — format and vintage are optional. Localhost only: a run costs real model calls.
+
+`beegent-ui` has no flags: it picks its backend and models up from the environment or `.env`
+(`LLM_BACKEND`, `PLANNER_MODEL`, …), prints the resolved names at startup, and shows them under
+the mode switcher. See [Backends](docs/backends.md).
+
+For development, run the halves separately so both reload — `uvicorn api.main:app --reload` and
+`cd ui && npx ng serve`; the dev server proxies `/api` across, so there is no CORS to configure.
+See [CONTRIBUTING](CONTRIBUTING.md#the-web-ui).
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — install, first run, reading the result

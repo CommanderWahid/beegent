@@ -425,3 +425,40 @@ def test_too_little_data_yields_no_band_at_all(tmp_path):
 
 def test_with_no_embedder_nothing_is_measured(tmp_path):
     assert SqliteStore(str(tmp_path / "m.db")).measure_relevance() == {}
+
+
+# --- catalog(): the READING view, which is not the matching view ---
+
+
+def test_the_catalog_spans_countries_and_shows_rot(tmp_path):
+    """verified_links() drops rot because the catalog stage must not offer it; a reader must see it."""
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(_run(candidates=[_verified()]), [])
+    store.record_run(DiscoveryRun(country="Elsewhere", use_case="u", status="ok", totals={},
+                                  candidates=[_verified("https://b.example/f.parquet")]), [])
+    dead = store.catalog("Atlantis")[0]
+    store.mark_link(dead["link_uid"], "ko")
+
+    every = store.catalog()
+    assert {r["country"] for r in every} == {"Atlantis", "Elsewhere"}, "no country filter"
+    assert {r["status"] for r in every} == {"ko", "ok"}, "rot is shown, not hidden"
+    assert store.verified_links("Atlantis") == [], "while the matching view still drops it"
+
+
+def test_the_catalog_carries_both_sides_of_the_trust_boundary(tmp_path):
+    """claim is model-written and verification is harness-measured; flattening them loses the point."""
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(_run(candidates=[_verified()]), [])
+
+    row = store.catalog()[0]
+    assert row["claim"] == {"edition": "2025"}
+    assert row["verification"] == {"ok": True, "status": 206}
+
+
+def test_the_catalog_shows_the_newest_row_per_url(tmp_path):
+    """Same newest-wins rule as verified_links, or a re-probe would appear twice."""
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(_run(candidates=[_verified()]), [])
+    store.record_run(_run(candidates=[_verified()]), [])
+
+    assert len(store.catalog()) == 1

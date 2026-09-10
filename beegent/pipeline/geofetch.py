@@ -165,10 +165,12 @@ class AgentResult:
 
 class GeofetchAgent:
     def __init__(self, tools: WebTools, max_steps: int | None = None,
-                 log: Callable[[str], None] = lambda m: None):
+                 log: Callable[[str], None] = lambda m: None,
+                 should_stop: Callable[[], bool] = lambda: False):
         self.tools = tools
         self.max_steps = config.GEOFETCH_MAX_STEPS if max_steps is None else max_steps
         self.log = log
+        self.should_stop = should_stop
         self._discovered: set[str] = set()
         self._last_probe: dict = {}
         self._reject_reason: str = ""
@@ -213,6 +215,12 @@ class GeofetchAgent:
         result = AgentResult(found=False)
 
         for step in range(1, self.max_steps + 1):
+            if self.should_stop():
+                # Like a spent budget: end deterministically, and keep the cost so far.
+                self.log(f"[step {step}] stopped: cancelled by the user")
+                result.report = {"found": False,
+                                 "failure_reason": "stopped by the user"}
+                return result
             if self.tools.budget_spent:
                 # Every remaining tool call would only error, so more LLM calls buy nothing.
                 self.log(f"[step {step}] stopped: HTTP request budget exhausted")
@@ -565,10 +573,11 @@ def _cost(result: AgentResult, tools: WebTools) -> dict:
 
 def resolve_angle(
     angle: SearchAngle, log: Callable[[str], None] = _log.info,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> tuple[Candidate | None, Candidate | None]:
     """Resolve one search angle into a verified candidate."""
     tools = WebTools(log=log)
-    agent = GeofetchAgent(tools=tools, log=log)
+    agent = GeofetchAgent(tools=tools, log=log, should_stop=should_stop)
     start_url = angle.url
 
     dataset = angle.dataset or angle.description

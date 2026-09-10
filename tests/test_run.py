@@ -88,7 +88,7 @@ def test_discover_records_the_failed_angle(monkeypatch):
     good = SearchAngle("good", "web_search", "r", dataset="d", format="GeoParquet")
     bad = SearchAngle("throttled", "web_search", "r", dataset="d", format="GeoPackage")
 
-    def fake_resolve(angle):
+    def fake_resolve(angle, **kwargs):
         if angle.format == "GeoParquet":
             return make_candidate("https://ok.example/p", "https://ok.example/f.parquet"), None
         # what resolve_angle now returns when the agent aborts mid-loop
@@ -151,7 +151,7 @@ def test_planner_bucket_reaches_totals_on_the_early_ok_exit(monkeypatch, reset_l
     from beegent import run as runmod
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     run = runmod.discover("Atlantis", "land cover")
 
     t = run.to_dict()["totals"]
@@ -171,7 +171,7 @@ def test_cached_tokens_reach_totals_from_both_metering_routes(monkeypatch, reset
         resource_url="https://ok.example/f.parquet",
         cost={"http_requests": 4, "prompt_tokens": 5_000, "completion_tokens": 1_000,
               "total_tokens": 6_000, "cached_tokens": 4_200})
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (cached, None))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (cached, None))
     run = runmod.discover("Atlantis", "land cover")
 
     t = run.to_dict()["totals"]
@@ -185,7 +185,7 @@ def test_a_backend_reporting_no_cache_leaves_the_key_at_zero(monkeypatch, reset_
     from beegent import run as runmod
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     run = runmod.discover("Atlantis", "land cover")
     assert run.to_dict()["totals"]["cached_tokens"] == 0
 
@@ -212,7 +212,7 @@ def test_a_raising_critic_call_does_not_lose_the_run(monkeypatch, reset_llm_usag
                      cost={"http_requests": 11, "prompt_tokens": 25_000,
                            "completion_tokens": 1_190, "total_tokens": 26_190})
     monkeypatch.setattr(llm, "_connector", Throttled())
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, dead))
     run = runmod.discover("Atlantis", "land cover")
 
     assert run.status == "needs_human_review"
@@ -231,7 +231,7 @@ def test_critic_bucket_is_counted_when_the_gate_fires(monkeypatch, reset_llm_usa
                      claim={"failure_reason": "nothing"},
                      cost={"prompt_tokens": 900, "completion_tokens": 100,
                            "total_tokens": 1_000})
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, dead))
     run = runmod.discover("Atlantis", "land cover")
 
     t = run.to_dict()["totals"]
@@ -245,7 +245,7 @@ def test_geofetch_is_not_double_counted(monkeypatch, reset_llm_usage):
     from beegent import run as runmod
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     run = runmod.discover("Atlantis", "land cover")
 
     assert "geofetch" not in llm.usage_by_role()
@@ -256,7 +256,7 @@ def test_meter_does_not_leak_between_runs(monkeypatch, reset_llm_usage):
     from beegent import run as runmod
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     first = runmod.discover("Atlantis", "land cover")
     second = runmod.discover("Atlantis", "land cover")
     assert first.totals["by_role"]["planner"] == second.totals["by_role"]["planner"]
@@ -275,7 +275,7 @@ def test_a_run_is_recorded_on_the_early_ok_exit(monkeypatch, tmp_path, reset_llm
     from beegent import run as runmod
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     store = _store(tmp_path)
     run = runmod.discover("Atlantis", "land cover", store=store)
 
@@ -291,7 +291,7 @@ def test_the_critic_note_is_recorded_not_just_consumed(monkeypatch, tmp_path, re
     _install(monkeypatch, critic_decision="needs_human_review")
     dead = Candidate(url="https://x.example/p", title="T", source="geofetch",
                      claim={"failure_reason": "nothing"}, cost={"total_tokens": 10})
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, dead))
     store = _store(tmp_path)
     run = runmod.discover("Atlantis", "land cover", store=store)
 
@@ -306,7 +306,7 @@ def test_tried_accumulates_across_iterations(monkeypatch, tmp_path, reset_llm_us
     _install(monkeypatch)  # replan -> two iterations
     seen = []
 
-    def fake_resolve(angle):
+    def fake_resolve(angle, **kwargs):
         seen.append(1)
         return None, Candidate(url=f"https://x.example/{len(seen)}", title="T",
                                source="geofetch", claim={"failure_reason": "dead"},
@@ -352,7 +352,7 @@ def test_a_broken_store_does_not_fail_the_run(monkeypatch, reset_llm_usage):
             return []
 
     _install(monkeypatch)
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     run = runmod.discover("Atlantis", "land cover", store=Broken())
     assert run.status == "ok"
 
@@ -390,7 +390,7 @@ def test_a_stale_catalog_hit_still_discovers(monkeypatch, reset_llm_usage):
 
     _install(monkeypatch)
     monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(400)])
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     planned = []
     real_plan = runmod.plan
     monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
@@ -405,7 +405,7 @@ def test_the_window_can_be_switched_off(monkeypatch, reset_llm_usage):
     monkeypatch.setattr(config, "CATALOG_FRESH_DAYS", 0)
     _install(monkeypatch)
     monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [_catalog_hit(0)])
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     planned = []
     real_plan = runmod.plan
     monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
@@ -420,7 +420,7 @@ def test_a_hit_without_a_timestamp_never_short_circuits(monkeypatch, reset_llm_u
     hit.verified_at = ""
     _install(monkeypatch)
     monkeypatch.setattr(runmod, "query_catalogs", lambda *a, **k: [hit])
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
     planned = []
     real_plan = runmod.plan
     monkeypatch.setattr(runmod, "plan", lambda *a, **k: planned.append(1) or real_plan(*a, **k))
@@ -454,7 +454,7 @@ def test_the_critic_sees_routes_earlier_RUNS_already_burned(monkeypatch, tmp_pat
     _install(monkeypatch, critic_decision="needs_human_review")
     dead = Candidate(url="https://fresh.example/this-time", title="T", source="geofetch",
                      claim={"failure_reason": "also dead"}, cost={"total_tokens": 10})
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, dead))
     seen = {}
     monkeypatch.setattr(runmod, "run_critic",
                         lambda *a: seen.setdefault("before", a[6]) and None
@@ -471,7 +471,7 @@ def test_an_empty_store_passes_only_this_runs_urls(monkeypatch, reset_llm_usage)
     _install(monkeypatch, critic_decision="needs_human_review")
     dead = Candidate(url="https://only.example/now", title="T", source="geofetch",
                      claim={"failure_reason": "dead"}, cost={"total_tokens": 10})
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, dead))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, dead))
     seen = {}
     monkeypatch.setattr(runmod, "run_critic",
                         lambda *a: seen.setdefault("before", a[6]) and None
@@ -494,7 +494,7 @@ def test_the_run_repairs_a_model_change_before_reading_any_vector(monkeypatch, t
                         lambda c, n, u="": order.append("memory") or [])
 
     _install(monkeypatch, critic_decision="needs_human_review")
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, None))
     runmod.discover("Atlantis", "land cover", store=store)
 
     assert order[0] == "sync", "re-embedding runs before anything compares a vector"
@@ -512,7 +512,7 @@ def test_a_failed_re_embedding_does_not_cost_the_run(monkeypatch, tmp_path, rese
     monkeypatch.setattr(store, "sync_embeddings", boom)
 
     _install(monkeypatch, critic_decision="needs_human_review")
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, None))
     run = runmod.discover("Atlantis", "land cover", store=store)
 
     assert run.status == "needs_human_review", "the run still finished and still reported"
@@ -525,7 +525,7 @@ def _after_a_model_change(monkeypatch, store, measured):
     monkeypatch.setattr(store, "sync_embeddings", lambda: {"runs": 1})
     monkeypatch.setattr(store, "measure_relevance", lambda: measured)
     _install(monkeypatch, critic_decision="needs_human_review")
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, None))
 
 
 def test_a_threshold_inside_the_measured_band_is_not_warned_about(monkeypatch, tmp_path,
@@ -566,7 +566,7 @@ def test_a_failed_measurement_does_not_cost_the_run(monkeypatch, tmp_path, reset
     monkeypatch.setattr(store, "measure_relevance",
                         lambda: (_ for _ in ()).throw(RuntimeError("model gone")))
     _install(monkeypatch, critic_decision="needs_human_review")
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: (None, None))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: (None, None))
 
     assert runmod.discover("Atlantis", "land cover", store=store).status == "needs_human_review"
 
@@ -598,7 +598,25 @@ def test_a_planner_that_recovers_still_resolves(monkeypatch, reset_llm_usage):
     monkeypatch.setattr(runmod, "plan",
                         lambda *a, **k: ([], "down") if calls.append(1) or len(calls) == 1
                         else ([SearchAngle("d", "web_search", "r", url="https://ok.example/p")], ""))
-    monkeypatch.setattr(runmod, "resolve_angle", lambda a: _verified())  # already a pair
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())  # already a pair
     run = runmod.discover("Atlantis", "land cover")
 
     assert run.status == "ok" and run.candidates, "iteration 2 planned and resolved normally"
+
+
+def test_a_stopped_run_keeps_what_it_verified_and_what_it_spent(monkeypatch, reset_llm_usage):
+    """A user stop is an exit, not a crash: status, candidates and totals all survive it."""
+    from beegent import run as runmod
+
+    _install(monkeypatch)
+    monkeypatch.setattr(runmod, "plan",
+                        lambda *a, **k: ([SearchAngle("d", "web_search", "r",
+                                                      url="https://ok.example/p"),
+                                          SearchAngle("d2", "web_search", "r",
+                                                      url="https://ok.example/q")], ""))
+    monkeypatch.setattr(runmod, "resolve_angle", lambda a, **k: _verified())
+    # Iteration, then angle 1, then angle 2: the user presses stop after the first result.
+    stop = iter([False, False, True])
+    run = runmod.discover("Atlantis", "land cover", should_stop=lambda: next(stop, True))
+    assert run.status == "stopped" and run.reason == "stopped by the user"
+    assert run.candidates, "whatever was verified before the stop is kept"

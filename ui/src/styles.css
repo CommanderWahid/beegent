@@ -1,0 +1,84 @@
+/* One hue family, hairline borders, generous space, one accent used sparingly. */
+:root {
+  --bg: #f4f4f6;
+  --sidebar: #ececed;
+  --surface: #ffffff;
+  --sunken: #f8f8fa;
+  --text: #16171a;
+  --dim: #666c75;
+  --faint: #949aa3;
+  --line: rgba(0, 0, 0, 0.09);
+  --line-firm: rgba(0, 0, 0, 0.16);
+  --accent: #0a6cff;
+  --accent-soft: rgba(10, 108, 255, 0.10);
+  --ok: #127a3d;
+  --bad: #cf2b1d;
+  --honey: #c88208;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --measure: 76ch;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131417;
+    --sidebar: #191a1e;
+    --surface: #1d1f24;
+    --sunken: #16171b;
+    --text: #ecedf0;
+    --dim: #9aa1ab;
+    --faint: #6c737e;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-firm: rgba(255, 255, 255, 0.17);
+    --accent: #4d94ff;
+    --accent-soft: rgba(77, 148, 255, 0.14);
+    --ok: #56cc7f;
+    --bad: #ff6f63;
+    --honey: #f5a524;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 -apple-system, "SF Pro Text", BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+code, pre, .mono { font-family: var(--mono); }
+
+button {
+  font: inherit;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 14px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.4; cursor: default; }
+button.quiet { background: none; color: var(--text); }
+button.quiet:hover:not(:disabled) { background: var(--accent-soft); }
+
+input, textarea {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  width: 100%;
+}
+input:focus, textarea:focus { outline: none; }
+
+a { color: var(--accent); }
+
+/* Scrollbars stay out of the way until they are needed. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-firm); border-radius: 6px;
+                            border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
