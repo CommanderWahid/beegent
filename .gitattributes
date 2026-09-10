@@ -1,0 +1,5 @@
+# One line ending in the repo: a CRLF rewrite once buried a real change in a 1,300-line diff.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
