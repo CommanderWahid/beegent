@@ -3,7 +3,7 @@
 ```bash
 uv sync
 uv sync --extra api    # the web API's deps; without them its tests skip
-uv run pytest          # 331 cases, ~2s
+uv run pytest          # 333 cases, ~2s
 uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
 ```
 
