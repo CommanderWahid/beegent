@@ -6,6 +6,11 @@ import threading
 
 import pytest
 
+# The web API is an optional extra, exactly like embeddings: absent is not an error.
+# CI installs it (`uv sync --extra api`), so these never skip where it matters.
+pytest.importorskip("fastapi", reason="install the 'api' extra to exercise the web API")
+pytest.importorskip("pycountry", reason="install the 'api' extra to exercise the web API")
+
 from api import chat, runner
 
 

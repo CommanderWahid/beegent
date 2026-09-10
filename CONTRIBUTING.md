@@ -2,7 +2,8 @@
 
 ```bash
 uv sync
-uv run pytest          # 326 cases, ~2s
+uv sync --extra api    # the web API's deps; without them its tests skip
+uv run pytest          # 331 cases, ~2s
 uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
 ```
 

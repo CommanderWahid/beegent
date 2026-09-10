@@ -20,7 +20,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
 
-      - run: uv sync
+      # --extra api: tests/test_api.py exercises the web API, whose deps are an extra.
+      # Without it those tests skip themselves and the API ships untested.
+      - run: uv sync --extra api
 
       # No secrets, and none needed: the suite is offline by intent - no network,
       # no API key, no LLM. A test that reaches the network is a bug.
