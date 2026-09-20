@@ -12,8 +12,12 @@
 [Documentation](docs/README.md)
 
 <p align="center">
-  <img src="assets/beegent_ui.png" alt="The Beegent web UI" width="900" />
+  <img src="assets/beegent_demo.webp" width="820"
+       alt="A Beegent run: the prompt, the agent working, verified results, and the data drawn on a map" />
 </p>
+
+<sub>A real run, sped up — prompt, agent, verified downloads, and the data on a map.<br/>
+Discovery takes a few minutes; a repeat request is answered from memory in under a second.</sub>
 
 </div>
 
