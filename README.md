@@ -12,7 +12,7 @@
 [Documentation](docs/README.md)
 
 <p align="center">
-  <img src="assets/beegent_ui.png" alt="" width="720" />
+  <img src="assets/beegent_ui.png" alt="The Beegent web UI" width="900" />
 </p>
 
 </div>
