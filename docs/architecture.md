@@ -61,6 +61,11 @@ so the most actionable thing a run produced reached neither the output file nor 
 `candidate_list.json` is unchanged and always written. It is the run's **deliverable**; the database
 is its **memory**. Neither is a fallback for the other.
 
+A third artifact appears only if you use the web UI: `~/.beegent/previews/` holds payloads fetched
+for a map, cached exactly as the server sent them. It is a **cache** — safe to delete at any time,
+and a fallback for neither of the other two. `SqliteStore.link()` exists for it, and is read by
+`api/` alone.
+
 **A fresh catalog hit ends the run before any LLM call.** A stored link that re-probes at HTTP 206
 is proven *live*, not *current* — `vintage: "latest"` means a 2026 edition says nothing about 2027 —
 so `CATALOG_FRESH_DAYS` (7) draws the line: inside it the catalog answers, outside it the hit is

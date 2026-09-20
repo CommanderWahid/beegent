@@ -220,6 +220,32 @@ ANGLE = SearchAngle(
 )
 
 
+# --- preview: module-level like PORTAL, because a transport factory is a constant, not state ---
+
+PREVIEW_GPKG = b"SQLite format 3" + bytes(4_096)  # the 16-byte magic, then padding
+PREVIEW_GEOJSON = (b'{"type":"FeatureCollection","features":[{"type":"Feature",'
+                   b'"geometry":{"type":"Point","coordinates":[5.1,52.1]}}]}')
+
+
+def fake_stream_transport(pages: dict, calls: list = None):
+    """A beegent.preview transport over canned pages: url -> (status, headers, body).
+
+    `calls` records every URL actually requested. Asserting it stayed EMPTY is how a test
+    proves a refusal happened before any socket was opened, rather than after.
+    """
+    from beegent.preview import Response
+
+    def transport(url, headers, timeout):
+        if calls is not None:
+            calls.append(url)
+        if url not in pages:
+            return Response(404, {}, url)
+        status, hdrs, body = pages[url]
+        return Response(status, hdrs, url, body=body)
+
+    return transport
+
+
 # --- fixtures ---
 
 

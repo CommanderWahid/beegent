@@ -84,3 +84,14 @@ CHAT_JSON_ATTEMPTS = _int("CHAT_JSON_ATTEMPTS", 2)  # an unparseable JSON-mode c
 HTTP_TIMEOUT = _int("HTTP_TIMEOUT", 20)
 LLM_TIMEOUT = _int("LLM_TIMEOUT", 180)  # worst case per completion is (LLM_MAX_RETRIES + 1) x this
 LLM_MAX_RETRIES = _int("LLM_MAX_RETRIES", 3)  # one more than the SDK default
+
+# --- map preview (beegent/preview.py) ----------------------------------------
+
+# Next to the store, so moving BEEGENT_DB moves the cache with it. Empty disables previews,
+# which is also what happens with no store: a preview needs a link row to resolve.
+PREVIEW_DIR = os.path.expanduser(os.environ.get(
+    "PREVIEW_DIR",
+    os.path.join(os.path.dirname(BEEGENT_DB), "previews") if BEEGENT_DB else ""))
+PREVIEW_MAX_BYTES = _int("PREVIEW_MAX_BYTES", 50_000_000)  # REFUSE over this, never truncate
+PREVIEW_TIMEOUT = _int("PREVIEW_TIMEOUT", 120)  # HTTP_TIMEOUT suits 16 bytes, not 50MB
+PREVIEW_CACHE_DAYS = _int("PREVIEW_CACHE_DAYS", 7, minimum=0)  # 0 refetches every time

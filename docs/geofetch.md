@@ -78,6 +78,10 @@ deterministic code before accepting it:
 | 1 | Minimum effort | A give-up filed before 5 HTTP requests — bounced once with a checklist of untried techniques |
 | 2 | URL present | `found: true` with no `download_url` |
 | 3 | Provenance | A URL that never appeared in any tool result — invented, rejected even if it is live |
+
+Provenance is also why the probe never rewrites the URL it was given. The web UI's map preview
+*may* — it is a visual aid rather than evidence; see
+[the output schema](output-schema.md#what-can-be-drawn-on-a-map).
 | 4 | Independent re-probe | A bad status, or an HTML error page served at a download URL |
 | 5 | Format match | A live file of the wrong type — a GeoJSON cannot satisfy a GeoParquet request |
 | 6 | Feature service is data | A capabilities document, or text that parses as no feature collection at all — some services answer errors with HTTP 200 |

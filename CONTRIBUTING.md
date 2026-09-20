@@ -3,7 +3,7 @@
 ```bash
 uv sync
 uv sync --extra api    # the web API's deps; without them its tests skip
-uv run pytest          # 333 cases, ~2s
+uv run pytest          # 376 cases, ~2s
 uvx ruff check .       # F (real errors) + ERA (commented-out code), configured in pyproject.toml
 ```
 
@@ -19,6 +19,8 @@ No network, no API key, no LLM — so you can work on the agent loop without spe
   (It cannot reach a subprocess, so a test that spawns one must stub its own dependencies.)
 - `WebTools` takes an injectable `transport`. The whole agent loop is exercised against a synthetic
   portal defined in `tests/conftest.py`.
+- `beegent/preview.py` takes one for the same reason, so the map preview download is exercised
+  without a byte leaving the machine.
 - Another autouse fixture blanks `config.BEEGENT_DB`, so no test touches your real
   `~/.beegent/memory.db` or loads an embedding model.
 
@@ -73,6 +75,34 @@ For development, run the two halves separately so both reload:
 LLM_BACKEND=groq uv run uvicorn api.main:app --reload --port 8000
 cd ui && npx ng serve          # :4200, proxies /api across
 ```
+
+The map preview pulls in deck.gl and loaders.gl, which are an order of magnitude larger than
+everything else in `ui/`. Three rules keep that honest:
+
+- `LinkMapComponent` is referenced **only** inside the `@defer` block in `link-card.component.ts`.
+  Any other reference — even an unused one — makes Angular bundle deck.gl eagerly, silently and
+  with no error. `npx ng build` must keep listing a separate `link-map-component` lazy chunk.
+- deck.gl 9 and loaders.gl must resolve to **one** `@loaders.gl/core`. Two copies produce
+  "loader not registered" errors that read like a code bug; `npm ls @loaders.gl/core` is the check.
+- **A basemap is verified by looking at a tile, never by its status code.** We shipped CARTO and
+  checked `200 image/png 15263B`; the bytes were a valid PNG with *API KEY REQUIRED* stamped across
+  it, because CARTO had begun requiring a key. Every programmatic check passed. This is the same
+  "errors served as HTTP 200" trap `classify_api_shape()` exists to catch on the data side.
+- Two more ways a tile URL fails *plausibly* rather than loudly. Esri's path is `{z}/{y}/{x}` —
+  **y before x** — and reversing it returns HTTP 200 and a coherent map of the wrong place. And a
+  template may contain **only** `{x}`, `{y}`, `{z}` and `{-y}`, which is all deck.gl substitutes:
+  a provider template carrying `{s}` or `{r}` (CARTO publishes one) keeps those braces in the
+  request, and an unresolvable `{s}` host fails every tile in silence. Subdomain rotation is the
+  array form of `data`, not `{s}`.
+- `proj4-list` (~1 MB of EPSG code → definition strings) is imported **inside** `toWgs84()`, not at
+  the top of the file. A static import would put it in the map chunk for every viewer, when most
+  payloads never need it: a GeoPackage carries its own definition, and anything already in degrees
+  needs none. It must keep showing up as its own `list-min` chunk in the build output.
+- Both defaults reach for a third-party CDN — sql.js fetches its WASM, and the loader worker comes
+  from unpkg. Both are switched off: the WASM is copied into `assets/` by `angular.json`, and
+  `worker: false` is passed at the call site. `externalDependencies` in `angular.json` is there
+  because sql.js ships one Emscripten bundle whose (never-executed) Node branch calls
+  `require("fs")`, which the bundler otherwise refuses to resolve.
 
 `uv run beegent-ui` does **not** reload: it holds the modules it imported at start, so an edit to
 `api/` or `beegent/` does nothing until you restart it — a changed prompt or log line looks

@@ -462,3 +462,37 @@ def test_the_catalog_shows_the_newest_row_per_url(tmp_path):
     store.record_run(_run(candidates=[_verified()]), [])
 
     assert len(store.catalog()) == 1
+
+
+def test_a_link_is_fetchable_by_its_uid(tmp_path):
+    """What a consumer needs to act on ONE link, with both sides already decoded."""
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(_run(candidates=[_verified()]), [])
+    uid = store.catalog()[0]["link_uid"]
+
+    row = store.link(uid)
+    assert row["resource_url"] == "https://api.atlantis.example/f.parquet"
+    assert row["claim"] == {"edition": "2025"}
+    assert row["verification"] == {"ok": True, "status": 206}
+    assert row["status"] == "ok"
+
+
+def test_an_unknown_uid_is_none_not_an_error(tmp_path):
+    store = SqliteStore(str(tmp_path / "m.db"))
+    assert store.link("no-such-uid") is None
+
+
+def test_link_returns_the_row_asked_for_not_the_newest_for_that_url(tmp_path):
+    """Deliberately NOT deduped: catalog answers what is current, link answers what was named.
+
+    Adding the ROW_NUMBER() dedupe here would silently hand back a sibling row.
+    """
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(_run(candidates=[_verified()]), [])
+    store.record_run(_run(candidates=[_verified()]), [])
+    with sqlite3.connect(str(tmp_path / "m.db")) as db:
+        uids = [r[0] for r in db.execute(
+            "SELECT link_uid FROM links ORDER BY rowid").fetchall()]
+
+    assert len(uids) == 2
+    assert store.link(uids[0])["link_uid"] == uids[0]

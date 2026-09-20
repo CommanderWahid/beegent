@@ -110,9 +110,45 @@ and is not worth paying every run. And `intersect()` reports no band at all when
 cases disagree about where the boundary is, which on real data happens often; no band means no
 recommendation, not a silent average.
 
-Three settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
-GeoPackage magic signature is exactly 16 bytes), and `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`,
-a dict and its float default with no per-run reason to retune them.
+Four settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
+GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`,
+a dict and its float default with no per-run reason to retune them, and the preview redirect hop
+cap (5 hops reaches any real download).
+
+### Map preview
+
+The web UI can draw a stored link on a map, to answer the one thing a probe cannot: whether a
+verified dataset covers the right country. The server fetches the bytes, caps them, and caches
+them **exactly as received** — it never parses a geospatial format; the browser does that.
+
+| Setting | Default | Effect |
+|---|---|---|
+| `PREVIEW_DIR` | next to `BEEGENT_DB`, so `~/.beegent/previews` | Where fetched payloads are cached. `""` disables previews, and an empty `BEEGENT_DB` already does |
+| `PREVIEW_MAX_BYTES` | `50000000` | Refused above this — never truncated. A known size is refused before any request is made |
+| `PREVIEW_TIMEOUT` | `120` | Seconds. `HTTP_TIMEOUT` suits a 16-byte probe, not a 50MB download |
+| `PREVIEW_CACHE_DAYS` | `7` | How long a cached payload is reused. `0` refetches every time |
+
+A cached payload is also dropped when the link was re-verified after it was written, so the cache
+follows the pipeline rather than drifting from it. The directory is a **cache**: deleting it is
+always safe.
+
+Geometry is always shown in EPSG:4326. The server asks the service for it where the service can
+oblige (`crs=CRS84`, `outSR=4326`), because projecting server-side beats converting thousands of
+polygons in a browser; anything that arrives projected anyway is converted in the browser instead.
+
+Two things to know about what it touches:
+
+- **The browser fetches map tiles** — from `tile.openstreetmap.org` by default, and from
+  `services.arcgisonline.com` (Esri dark gray canvas) when the dark button in the corner of the map
+  is on. The light map is the default in both light and dark app themes. This is the only
+  third-party request the otherwise localhost-only app makes, and both tile URLs are named
+  constants in `ui/src/app/panes/link-map.component.ts` if you would rather point them elsewhere.
+  The map credits OpenStreetMap always and Esri when its tiles are showing, as their terms require.
+- **There is no private-IP or DNS-rebinding filter, deliberately.** The endpoint takes a
+  `link_uid` and resolves the URL from the store, so the set of reachable URLs is exactly the set
+  the pipeline already probed; the scheme allowlist is re-checked on every redirect hop. Doing
+  rebinding properly means resolving and pinning the socket yourself, and anything less is
+  decorative. If you ever expose the API beyond `127.0.0.1`, that is the gap to close first.
 
 ### Breadth and depth
 

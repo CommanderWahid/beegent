@@ -135,6 +135,7 @@ def test_the_resolved_config_names_models_and_never_a_key(mocker):
     from api import main
     out = main.resolved_config()
     assert out["backend"] and set(out["models"]) == {"planner", "geofetch", "critic"}
+    assert set(out["preview"]) == {"enabled", "max_bytes"}
     assert "key" not in json.dumps(out).lower() and "token" not in json.dumps(out).lower()
 
 
@@ -153,3 +154,62 @@ def test_stop_sets_the_flag_discover_reads():
     r._stops["abc"] = threading.Event()
     assert r.stop("abc") and r._stops["abc"].is_set()
     assert not r.stop("nope")
+
+
+def _stored_link(tmp_path, payload_type="sqlite/geopackage", shape=""):
+    """One real row in a real store, so the route resolves a uid exactly as it will live."""
+    from beegent.schemas import Candidate, DiscoveryRun
+    from beegent.store import SqliteStore
+
+    store = SqliteStore(str(tmp_path / "m.db"))
+    store.record_run(DiscoveryRun(country="Atlantis", use_case="boundaries", candidates=[
+        Candidate(url="https://portal.example/p", title="boundaries", source="geofetch",
+                  confidence=0.95, resource_url="https://data.example/x",
+                  verification={"ok": True, "status": 206, "payload_type": payload_type,
+                                "shape": shape, "access": "file"})]), [])
+    return store.catalog()[0]["link_uid"]
+
+
+def test_a_preview_is_addressed_by_uid_so_a_url_can_never_be_handed_in():
+    """The SSRF boundary is the route signature itself: anything URL-shaped is a 422."""
+    from fastapi import HTTPException
+
+    from api import main
+    with pytest.raises(HTTPException) as caught:
+        main.link_preview("https://169.254.169.254/latest/meta-data/")
+    assert caught.value.status_code == 422
+
+
+def test_a_preview_without_a_store_is_a_503():
+    """_no_real_store blanks BEEGENT_DB, which is a configuration and not an error."""
+    from fastapi import HTTPException
+
+    from api import main
+    with pytest.raises(HTTPException) as caught:
+        main.link_preview("00000000-0000-4000-8000-000000000000")
+    assert caught.value.status_code == 503
+
+
+def test_a_preview_of_an_unknown_link_is_a_404(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    from api import main
+    monkeypatch.setattr("beegent.config.BEEGENT_DB", str(tmp_path / "m.db"))
+    _stored_link(tmp_path)
+    with pytest.raises(HTTPException) as caught:
+        main.link_preview("00000000-0000-4000-8000-000000000000")
+    assert caught.value.status_code == 404
+
+
+def test_a_preview_of_an_undrawable_payload_is_a_415(tmp_path, monkeypatch):
+    """The server re-checks what the button already greyed out - a crafted request must not spend."""
+    from fastapi import HTTPException
+
+    from api import main
+    monkeypatch.setattr("beegent.config.BEEGENT_DB", str(tmp_path / "m.db"))
+    monkeypatch.setattr("beegent.config.PREVIEW_DIR", str(tmp_path / "previews"))
+    uid = _stored_link(tmp_path, payload_type="pdf")
+    with pytest.raises(HTTPException) as caught:
+        main.link_preview(uid)
+    assert caught.value.status_code == 415
+    assert "pdf" in caught.value.detail

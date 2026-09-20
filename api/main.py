@@ -1,15 +1,16 @@
 """FastAPI app: read the store, start a run, stream its log."""
 
 import logging
+import re
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from beegent import config
+from beegent import config, preview
 from beegent.llm import get_connector
 from beegent.store import SqliteStore
 
@@ -37,11 +38,62 @@ def links(country: str = "") -> list[dict]:
     return _store().catalog(country)
 
 
+_UID = re.compile(r"^[0-9a-fA-F-]{36}$")
+# Which refusal the byte pipe reported, and what that means over HTTP.
+_PREVIEW_STATUS = {"disabled": 503, "unsupported": 415, "rot": 409,
+                   "too_large": 413, "blocked": 502, "http": 502, "network": 502}
+
+
+def _preview_row(link_uid: str) -> dict:
+    """The stored row, or the right refusal. A link_uid - NEVER a URL - is the SSRF boundary."""
+    if not _UID.match(link_uid):
+        raise HTTPException(422, "not a link_uid")
+    row = _store().link(link_uid)
+    if row is None:
+        raise HTTPException(404, "no such link")
+    return row
+
+
+@app.get("/api/links/{link_uid}/preview")
+def link_preview(link_uid: str) -> Response:
+    """The bytes behind one verified link, exactly as the server sent them.
+
+    The harness does not parse them: the browser does. What happens here is a capped,
+    scheme-checked fetch of a URL this store already verified, cached on disk.
+    """
+    row = _preview_row(link_uid)
+    out = preview.ensure_cached(row)
+    if out.reason:
+        raise HTTPException(_PREVIEW_STATUS.get(out.reason, 502), out.detail)
+    return FileResponse(
+        out.path,
+        media_type=out.content_type or "application/octet-stream",
+        headers={
+            "X-Beegent-Cache": "hit" if out.cached else "miss",
+            "X-Beegent-Payload-Type": row["verification"].get("payload_type", ""),
+            "X-Beegent-Bytes": str(out.bytes_written),
+            # What was ACTUALLY requested: a WGS84 rewrite must never be invisible.
+            "X-Beegent-Fetched-Url": out.fetched_url,
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
+
+
+@app.delete("/api/links/{link_uid}/preview", status_code=204)
+def drop_link_preview(link_uid: str) -> Response:
+    """Forget the cached payload, so a stale one is a click to fix rather than a puzzle."""
+    _preview_row(link_uid)
+    preview.drop_cached(link_uid)
+    return Response(status_code=204)
+
+
 @app.get("/api/config")
 def resolved_config() -> dict:
     """Which backend and models would answer - the CLI's [config] line, as JSON. No secrets."""
     c = get_connector()
-    return {"backend": c.provider, "models": {r: c.model_for(r) for r in c.ROLES}}
+    return {"backend": c.provider, "models": {r: c.model_for(r) for r in c.ROLES},
+            "preview": {"enabled": bool(config.PREVIEW_DIR),
+                        "max_bytes": config.PREVIEW_MAX_BYTES}}
 
 
 @app.get("/api/countries")

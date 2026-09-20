@@ -32,12 +32,22 @@
                 "glob": "beegent_logo.svg",
                 "input": "../assets",
                 "output": "."
+              },
+              {
+                "glob": "sql-wasm.wasm",
+                "input": "node_modules/sql.js/dist",
+                "output": "assets"
               }
             ],
             "styles": [
               "src/styles.css"
             ],
-            "scripts": []
+            "scripts": [],
+            "externalDependencies": [
+              "fs",
+              "path",
+              "crypto"
+            ]
           },
           "configurations": {
             "production": {

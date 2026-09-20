@@ -1,12 +1,14 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 
 /** What the harness measured off the wire. Never merged with `claim`. */
 export interface Verification {
   ok?: boolean; status?: number; payload_type?: string;
   total_size_bytes?: number | null; first_bytes_hex?: string;
   access?: string; shape?: string; feature_count?: number; count_is_exact?: boolean;
+  /** What the server said it was serving, and the probe note when it looked like a page. */
+  content_type?: string; note?: string;
 }
 
 export interface Link {
@@ -20,7 +22,12 @@ export interface Link {
 export interface CountryCount { country: string; links: number; ok: number; }
 
 /** What would answer a request. Names only - never key material. */
-export interface Resolved { backend: string; models: Record<string, string>; }
+export interface Resolved {
+  backend: string;
+  models: Record<string, string>;
+  /** Whether a map preview can run at all, and the cap the tooltip quotes. */
+  preview?: { enabled: boolean; max_bytes: number };
+}
 
 /** What the chat pane renders. `links` are store rows, never prose about them. */
 export interface Message {
@@ -60,6 +67,9 @@ export class Beegent {
   /** Mirrors the API's single-run lock, so the UI can disable Search while one is in flight. */
   readonly running = signal(false);
 
+  /** Whether previews are on, and the byte cap - filled in by the first config() call. */
+  readonly previewConfig = signal<{ enabled: boolean; max_bytes: number } | null>(null);
+
   constructor(private http: HttpClient) {}
 
   countries(): Observable<CountryCount[]> {
@@ -70,8 +80,21 @@ export class Beegent {
     return this.http.get<Link[]>('/api/links', { params: country ? { country } : {} });
   }
 
+  /** Where the bytes live. The map component fetch()es this itself, so a 50MB payload
+   *  never enters Angular change detection and a refusal keeps its server-written detail. */
+  previewUrl(linkUid: string): string {
+    return `/api/links/${linkUid}/preview`;
+  }
+
+  dropPreview(linkUid: string): Observable<void> {
+    return this.http.delete<void>(`/api/links/${linkUid}/preview`);
+  }
+
   config(): Observable<Resolved> {
-    return this.http.get<Resolved>('/api/config');
+    // Cached here rather than threaded down through both panes: a link card deep in the
+    // tree needs the cap to name it in a tooltip, and that is the whole of its interest.
+    return this.http.get<Resolved>('/api/config')
+      .pipe(tap((c) => this.previewConfig.set(c.preview ?? null)));
   }
 
   greeting(): Observable<{ reply: string }> {

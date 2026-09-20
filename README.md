@@ -126,7 +126,8 @@ LLM_BACKEND=groq uv run beegent-ui     # or any other backend
 ```
 
 An agent that asks what you need, a catalog of everything already verified, and the run's log
-streamed live while it works. It requires a **use case and a real country** before it will spend
+streamed live while it works. Any verified link it can draw gets a **Show on map** button, which
+answers the one thing sixteen magic bytes cannot: whether the data covers the right country. It requires a **use case and a real country** before it will spend
 anything — format and vintage are optional. Localhost only: a run costs real model calls.
 
 `beegent-ui` has no flags: it picks its backend and models up from the environment or `.env`

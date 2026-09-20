@@ -234,6 +234,24 @@ class SqliteStore:
         return [dict(r) | {"claim": json.loads(r["claim"]),
                            "verification": json.loads(r["verification"])} for r in rows]
 
+    def link(self, link_uid: str) -> dict | None:
+        """One row by primary key - what a consumer needs to act on a single link.
+
+        Deliberately NOT deduped: verified_links() and catalog() collapse duplicate
+        resource_urls because they answer "what is current", but a caller that named a
+        link_uid must get THAT row, not the newest sibling sharing its URL.
+        """
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT link_uid, country, dataset, url, resource_url, verification, claim, "
+                "confidence, last_verified, status FROM links WHERE link_uid = ?",
+                (link_uid,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row) | {"claim": json.loads(row["claim"]),
+                            "verification": json.loads(row["verification"])}
+
     def embedded_links(self, model: str) -> list[dict]:
         """Every link comparable against THIS model - filtered in SQL, never in Python."""
         with self._connect() as db:
