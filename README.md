@@ -2,7 +2,7 @@
 
 # <img src="assets/beegent_logo.svg" alt="" height="72" valign="middle" /> Beegent
 
-**Find geospatial data for any country and use case — and verify it actually downloads.**
+**A harness that translates a use case into ready-to-use geospatial data you can check on a map before you rely on it.**
 
 [![CI](https://github.com/CommanderWahid/beegent/actions/workflows/ci.yml/badge.svg)](https://github.com/CommanderWahid/beegent/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -23,10 +23,9 @@ Discovery takes a few minutes; a repeat request is answered from memory in under
 
 ---
 
-Tell Beegent a country and what you need the data for. It plans several routes, sends an agent
-down each one, and returns only the URLs it could **prove** are real — each one independently
-re-fetched by the harness, with the right HTTP status and magic bytes matching the format asked
-for. A URL the model invented cannot get through.
+Tell Beegent a country and what you need. It returns only the URLs it could **prove** are real —
+each re-fetched by the harness, magic bytes checked — and draws them on a map, so you can see they
+cover the right place.
 
 ## Run it
 

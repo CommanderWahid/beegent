@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "beegent"
 version = "0.1.0"
-description = "Multi-agent pipeline that turns (country, use_case) into verified geospatial download URLs"
+description = "Translates a use case into ready-to-use geospatial data, proven to download and drawn on a map"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{ name = "Wahid Atoui" }]

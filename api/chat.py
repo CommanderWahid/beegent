@@ -5,7 +5,7 @@ import pycountry
 from beegent.llm import chat_json
 
 GREETING = (
-    "I find geospatial data and verify it actually downloads.\n\n"
+    "I find geospatial data, prove it downloads, and draw it on a map.\n\n"
     "To search I need a **use case** and a **country**. Tell me a **format** "
     "(GeoPackage, GeoParquet, Shapefile, GeoJSON — or **API** for a live service rather "
     "than a file) and a **vintage** if they matter — otherwise I take whatever the "
