@@ -4,17 +4,27 @@ import { Beegent, ChatReply, CountryCount, Link, Message, Resolved, RunFields, R
 import { ChatPaneComponent } from './panes/chat-pane.component';
 import { CatalogPaneComponent } from './panes/catalog-pane.component';
 import { LogPaneComponent } from './panes/log-pane.component';
+import { Stage, advanceStages, finishStages, initialStages } from './panes/stages';
 
 type Mode = 'chat' | 'catalog' | 'logs';
 
 /** A log line to plain words. The chat says WHAT is happening; the Logs tab keeps the detail. */
 const STEPS: [RegExp, string][] = [
+  // The specific form first, its existing general form directly beneath it as the fallback.
+  // Only the HOST is captured, never the whole URL: a download URL runs to ~120 characters and
+  // would wrap the very line this detail is meant to make readable.
+  [/^fetch_page https?:\/\/([^/\s]+)/, 'Reading a page on $1…'],
   [/^fetch_page\b/, 'Reading a page…'],
+  // web_tools logs the query with {query!r}, so repr picks the quote character.
+  [/^web_search ['"](.+)['"]/, 'Searching the web for “$1”…'],
   [/^web_search\b/, 'Searching the web…'],
+  [/^probe_url https?:\/\/([^/\s]+)/, 'Checking a download on $1…'],
   [/^probe_url\b/, 'Checking a download…'],
+  [/^\[plan\] (\d+) angle/, 'Planned $1 route(s) — starting…'],
   [/^\[plan\]/, 'Planning routes…'],
+  [/^\[catalog\] (\d+)\/(\d+) stored link/, 'Checking what I hold — $1 of $2 match…'],
   [/^\[(catalog|memory)\]/, 'Checking what I already hold…'],
-  [/^\[geofetch\] angle (\d+)\/(\d+)/, 'Working on route $1 of $2…'],
+  [/^\[geofetch\] angle (\d+)\/(\d+)/, 'Route $1 of $2…'],
   [/^\[geofetch\]/, 'Following a route…'],
   [/^\[(gate|critic)\]/, 'Reviewing what was found…'],
   [/^\[error\]/, 'Something went wrong — see the logs.'],
@@ -29,6 +39,8 @@ const STEPS: [RegExp, string][] = [
 })
 export class AppComponent implements OnInit {
   readonly mode = signal<Mode>('chat');
+  /** The pipeline as steps, folded from the same log lines the chat reads. */
+  readonly stages = signal<Stage[]>(initialStages());
   readonly countries = signal<CountryCount[]>([]);
   readonly country = signal('');
   readonly catalog = signal<Link[]>([]);
@@ -126,6 +138,7 @@ export class AppComponent implements OnInit {
         this.run.set({ id: run_id, country: fields.country,
                        use_case: fields.sent_as || fields.use_case,
                        running: true, step: 'Starting…' });
+    this.stages.set(initialStages());
         this.wait(true);
         this.api.logs(run_id, (line) => this.line(line), () => this.finish(run_id));
       },
@@ -152,6 +165,7 @@ export class AppComponent implements OnInit {
 
   private line(raw: string): void {
     this.log.update((l) => [...l, raw]);
+    this.stages.update((s) => advanceStages(s, raw));
     const text = raw.trim();
     for (const [pattern, label] of STEPS) {
       const found = text.match(pattern);
@@ -165,6 +179,7 @@ export class AppComponent implements OnInit {
 
   private finish(runId: string): void {
     this.run.update((r) => r && { ...r, running: false, step: '' });
+    this.stages.update(finishStages);
     this.wait(false);
     this.refresh();
     this.api.result(runId).subscribe({

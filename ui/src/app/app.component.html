@@ -37,7 +37,7 @@
             <catalog-pane [links]="catalog()" [country]="country()"
                           [loading]="catalogLoading()" (ask)="mode.set('chat')" />
           }
-          @case ('logs') { <log-pane [lines]="log()" /> }
+          @case ('logs') { <log-pane [lines]="log()" [stages]="stages()" /> }
         }
       </section>
     }
