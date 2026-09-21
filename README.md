@@ -30,27 +30,28 @@ for. A URL the model invented cannot get through.
 
 ## Run it
 
+**Web UI** — chat, catalog, live log, and **Show on map** for any verified link:
+
 ```bash
 uv sync --extra api --extra embeddings
 cd ui && npm ci && npx ng build && cd ..
-uv run beegent-ui                      # http://127.0.0.1:8000
+uv run beegent-ui                     # http://127.0.0.1:8000
 ```
 
-An agent that asks what you need, a catalog of everything already verified, and the run's log
-streamed live. Any verified link it can draw gets a **Show on map** button — which answers the one
-thing magic bytes cannot: whether the data covers the right country.
+**Container** — the same UI, with no toolchain on the host:
 
-Localhost only, and a run costs real model calls. Backend and models come from the environment or
-`.env` — see [Backends](docs/backends.md). `docker compose up --build` serves the same thing with
-no toolchain on the host ([details](docs/getting-started.md#in-a-container)).
+```bash
+docker compose up --build             # http://127.0.0.1:8000
+```
 
-### Or from the command line
-
-The same pipeline, writing `candidate_list.json` instead of drawing it:
+**Command line** — no UI at all; writes `candidate_list.json` instead of drawing it:
 
 ```bash
 uv run python -m beegent.run --country France --use-case "building footprints as a geoparquet file"
 ```
+
+Localhost only, and a run costs real model calls. Backend and models come from the environment or
+`.env` — see [Backends](docs/backends.md).
 
 ## Why
 
