@@ -1,0 +1,44 @@
+# Mirrors CI rather than inventing a second standard: the same ruff settings from
+# pyproject.toml, and the same test suite.
+#
+#   uv run pre-commit install        # once
+#   uv run pre-commit run --all-files
+#
+# Revisions come from `uv run pre-commit autoupdate`.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+      - id: check-yaml          # .github/workflows/ci.yml, docker-compose.yml
+
+      # ui/tsconfig*.json are JSONC - Angular ships them with /* comments */.
+      - id: check-json
+        exclude: ^ui/tsconfig.*\.json$
+
+      # The default is 500kB, which would block assets/beegent_demo.webp (5.8MB).
+      # 8MB still catches a screen recording, which has landed in this repo root twice.
+      - id: check-added-large-files
+        args: [--maxkb=8192]
+
+  # Lint only. NOT ruff-format: this project has never been formatted with it, so adding it
+  # would rewrite every file in one commit and bury real changes in the noise.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+
+  - repo: local
+    hooks:
+      # Worth running on every commit only because the suite is offline and takes ~2s. It needs
+      # no network, no API key and no model, so it cannot hang or cost anything.
+      - id: pytest
+        name: pytest (offline, ~2s)
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        types: [python]

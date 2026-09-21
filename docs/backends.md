@@ -66,33 +66,26 @@ not called that in your workspace — check `GET /api/2.0/serving-endpoints`.
 
 ## Choosing a backend for the web UI
 
-`beegent-ui` takes no command-line flags. It reads the same environment as everything else, so a
-backend is one variable — set it inline or put `LLM_BACKEND=…` in `.env`:
+`beegent-ui` takes no flags — a backend is one variable, inline or in `.env`:
 
 ```bash
 LLM_BACKEND=groq       uv run beegent-ui
-LLM_BACKEND=databricks uv run beegent-ui
 PLANNER_MODEL=qwen3:8b uv run beegent-ui   # still Ollama, but a lighter chat
 ```
 
-The chat front door uses the **planner** role, so `PLANNER_MODEL` is what decides whether the
-first message answers in seconds or in minutes. On Ollama that role defaults to `deepseek-r1:14b`
-— a 14B reasoning model doing a one-line classification, which is why a hosted backend feels so
-much quicker there.
-
-`connector.validate()` runs before the server binds, so a missing key or an endpoint name that
-does not exist in your workspace fails at startup instead of hanging the first message. The
-resolved backend and models are logged as `[config] backend=… planner=…` and served by
-`GET /api/config`.
+The chat front door uses the **planner** role, so `PLANNER_MODEL` decides whether the first message
+answers in seconds or minutes — on Ollama that role defaults to `deepseek-r1:14b`, a 14B reasoning
+model doing a one-line classification, which is why a hosted backend feels so much quicker.
+`validate()` runs before the server binds, so a bad key or endpoint fails at startup rather than
+hanging the first message.
 
 ## Models need tuning
 
-The defaults above are a starting point, not a recommendation. Swap them per role with
-`--planner-model` / `--geofetch-model` / `--critic-model` or the matching env vars, and judge the
-result on `totals.by_role` in the output rather than on the price per token.
+The defaults are a starting point, not a recommendation. Swap them per role and judge on
+`totals.by_role` rather than on price per token.
 
-Geofetch is where ~99% of a run's tokens go, and it is the role where a cheaper model can cost more.
-Same use case, same portal, only the geofetch model changed:
+Geofetch is where ~99% of a run's tokens go, and where a cheaper model can cost more. Same use
+case, same portal, only the geofetch model changed:
 
 | | `haiku-4-5` | `sonnet-4-6` |
 |---|---|---|
@@ -101,8 +94,7 @@ Same use case, same portal, only the geofetch model changed:
 | iterations | 2, still nothing | **1** |
 
 Cheaper per call, twice as expensive per run — the weaker model spent its request budget guessing
-path names instead of reading the service description it had already fetched. Nothing in the prompt
-differed between the two runs.
+path names instead of reading the service description it had already fetched. Nothing else differed.
 
 ## Writing a connector
 

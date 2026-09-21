@@ -113,42 +113,24 @@ to separate.
 
 #### What can be drawn on a map
 
-The web UI offers a map for a link whose `payload_type` is `sqlite/geopackage`, or is `json-text`
+The web UI offers a map for a link whose `payload_type` is `sqlite/geopackage`, or `json-text`
 with a `shape` of `geojson_featurecollection` or `esrijson_featureset`. Everything else — GML, a
-zipped shapefile, GeoParquet, a PDF — leaves the button disabled and says which payload type
+zipped shapefile, GeoParquet, a PDF — leaves the button disabled and names the payload type that
 stopped it. The check is on what the harness measured, never on the URL or a file extension.
 
-**Everything is drawn in EPSG:4326 degrees**, whatever it arrived as, because a map engine reads
-nothing else. Where the source projection comes from depends on the payload, and only a declaration
-counts — coordinates alone cannot identify a projection:
+Everything is drawn in **EPSG:4326**, whatever it arrived as. A GeoPackage carries its own
+definition in `gpkg_spatial_ref_sys`, so it converts with no lookup table; Esri and OGC payloads
+declare a code, which is resolved against a definitions table loaded only when needed; a plain
+GeoJSON that declares nothing is assumed to be degrees and checked. A declared `EPSG:4326` is read
+as lon/lat rather than the register's lat/lon, because every GeoJSON in the wild writes lon/lat.
+A payload that is projected **and** declares no CRS is refused with its coordinate ranges named,
+since there is nothing to convert from. Multi-layer files draw one layer at a time.
 
-| payload | what it declares | how it converts |
-|---|---|---|
-| GeoPackage | the full WKT, in its own `gpkg_spatial_ref_sys` | converted while parsing. Works for any CRS on earth with no lookup table, because the file carries its own definition |
-| Esri JSON | `spatialReference.wkid` / `latestWkid` | code looked up in a definitions table, loaded only when needed |
-| OGC API-Features / WFS | a legacy `crs` member, e.g. `urn:ogc:def:crs:EPSG::28992` | same |
-| plain GeoJSON | usually nothing — RFC 7946 mandates CRS84 | assumed to be degrees, and checked |
-
-A declared `EPSG:4326` is read as **lon/lat**, not the lat/lon axis order the register specifies —
-every GeoJSON in the wild writes lon/lat, and following the register would put Dutch data in
-Somalia. That is an assumption the data cannot confirm: a swap that stays inside valid ranges is
-undetectable.
-
-The only remaining refusal is a payload whose coordinates are not degrees **and** which declares no
-CRS at all. There is then nothing to convert *from*, so the map says so and names the ranges rather
-than drawing the data somewhere wrong.
-
-**A preview is a visual aid, never evidence.** Nothing it fetches is stored as a `resource_url`,
-and nothing it observes is written back into `verification`. That is what lets it do one thing the
-probe may not: **add a query parameter** — `crs=…CRS84`, `outSR=4326`, `srsName=…` — asking the
-service to do the projection itself, which is cheaper than converting thousands of polygons in a
-browser. `probe_url()` must never rewrite a URL, since the stored `resource_url` *is* what the
-verification guarantee is about; the preview is a different contract. What was actually requested
-comes back in the `X-Beegent-Fetched-Url` header, so the rewrite is never invisible, and a
-parameter that makes the server answer 4xx is dropped and the stored URL retried.
-
-A file with several layers — a GeoPackage usually has several — lists them and draws **one at a
-time**, since a layer is the unit a person actually wants to look at.
+**A preview is a visual aid, never evidence.** Nothing it fetches becomes a `resource_url` and
+nothing it observes is written back into `verification`. That is what lets it add a query
+parameter — `crs=…CRS84`, `outSR=4326` — asking the service to project server-side, which
+`probe_url()` may never do: the stored `resource_url` *is* what the guarantee is about. The URL
+actually requested comes back in `X-Beegent-Fetched-Url`, so the rewrite is never invisible.
 
 #### When `access` is `api`
 

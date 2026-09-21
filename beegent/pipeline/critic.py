@@ -10,7 +10,7 @@ _log = logging.getLogger(__name__)
 CRITIC_SYSTEM = """You review a failed-looking dataset discovery run and decide what happens next.
 
 Exactly two decisions are available:
-  "replan"             - there is a plausibly better angle nobody tried yet. 
+  "replan"             - there is a plausibly better angle nobody tried yet.
                          Say concretely what to try instead.
   "needs_human_review" - the data probably does not exist in an open, findable form, or the
                          request is too vague/exotic to search for. Say why in one sentence.

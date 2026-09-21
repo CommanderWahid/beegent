@@ -35,60 +35,47 @@ starts at row 2 — `LLM_BACKEND` and the three `*_MODEL` variables are its whol
 environment or `.env`. It logs what resolved at startup and serves the same answer at
 `GET /api/config`.
 
-## Command-line options
+## Options
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--country` | required | The country to search for |
-| `--use-case` | required | Free-text description of the data you need |
-| `--out` | `candidate_list.json` | Where to write results |
-| `--backend` | `ollama` | Which connector to use |
-| `--planner-model` | connector default | Model for the planner |
-| `--geofetch-model` | connector default | Model for the fetch agent |
-| `--critic-model` | connector default | Model for the critic |
+| Flag | Environment | Default | Meaning |
+|---|---|---|---|
+| `--country` | — | required | The country to search for |
+| `--use-case` | — | required | Free-text description of the data you need |
+| `--out` | — | `candidate_list.json` | Where to write results |
+| `--backend` | `LLM_BACKEND` | `ollama` | Which connector to use |
+| `--planner-model` | `PLANNER_MODEL` | connector default | Model for the planner |
+| `--geofetch-model` | `GEOFETCH_MODEL` | connector default | Model for the fetch agent |
+| `--critic-model` | `CRITIC_MODEL` | connector default | Model for the critic |
 
-## Environment variable options
-
-An alternative to the flags above, and **lower precedence** — a CLI flag always wins over an
-environment variable. Set them dynamically for one run (`GEOFETCH_MODEL=qwen3:8b uv run ...`) or
-put them in `.env` (see `.env.example`); real environment variables win over `.env`.
-
-| Variable | Purpose |
-|---|---|
-| `LLM_BACKEND` | Which connector to use, if `--backend` is not given |
-| `PLANNER_MODEL`, `GEOFETCH_MODEL`, `CRITIC_MODEL` | Per-role model override |
-| `GROQ_API_KEY`, `MISTRAL_API_KEY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN` | Backend credentials — see [Backends](backends.md) |
-| Any integer setting in `beegent/config.py` | Overrides that pipeline tunable — see below |
+Backend credentials — `GROQ_API_KEY`, `MISTRAL_API_KEY`, `DATABRICKS_HOST`, `DATABRICKS_TOKEN` —
+are environment-only; see [Backends](backends.md). So is any integer setting in `beegent/config.py`,
+covered below. Real environment variables win over `.env`.
 
 ## Pipeline settings
 
-All in `beegent/config.py`. **Every numeric setting below is overridable by an environment
-variable of the same name**, with the same precedence as the model variables — so
-`MAX_ANGLES=1 uv run python -m beegent.run ...` works without editing the file. A value of the
-wrong type, or outside the range a setting can mean, fails at startup rather than silently falling
-back — a cosine above `1.0` would match nothing at all, and doing that quietly is the failure the
-check exists to prevent.
+All in `beegent/config.py`. **Every numeric setting below is overridable by an environment variable
+of the same name** — `MAX_ANGLES=1 uv run python -m beegent.run ...` needs no source edit. A value
+of the wrong type, or out of range, fails at startup rather than silently falling back: a cosine
+above `1.0` would match nothing at all, and doing that quietly is the failure the check prevents.
 
-Two similarity thresholds, both measured from your own stored data and both invalidated whenever
-`EMBED_MODEL` changes:
+Two similarity thresholds, both measured from your own stored data:
 
-- **`CATALOG_MIN_RELEVANCE`** (`0.30`) — the cosine a stored **dataset** must reach for its link to
-  be offered. Compares a use case to a dataset description.
-- **`MEMORY_MIN_RELEVANCE`** (`0.45`) — the cosine a past run's **use case** must reach for that run
-  to be replayed to the planner and the critic. Compares two use cases.
+- **`CATALOG_MIN_RELEVANCE`** (`0.30`) — the cosine a stored **dataset** must reach to be offered.
+  Compares a use case to a dataset description.
+- **`MEMORY_MIN_RELEVANCE`** (`0.45`) — the cosine a past run's **use case** must reach to be
+  replayed to the planner and critic. Compares two use cases.
 
-They are separate numbers because they compare different kinds of text, and a single constant would
-be calibrated for neither. Without the second one, a country's most recent runs are replayed
-regardless of what they were about — a boundaries run fed dead URLs from a building-footprints run.
+Separate numbers because they compare different kinds of text; one constant would be calibrated for
+neither. Without the second, a boundaries run gets fed dead URLs from a building-footprints run.
 
-Changing `EMBED_MODEL` also invalidates every vector already stored — they are excluded from
-matching rather than compared. **A run repairs this itself**: it re-embeds whatever the current model
-cannot compare before anything reads a vector, so a model change costs one slower startup rather
-than silently losing the catalog and run memory. An unchanged model finds nothing to do.
+Changing `EMBED_MODEL` invalidates every stored vector — they are excluded from matching rather
+than compared. **A run repairs this itself**, re-embedding what the current model cannot compare
+before anything reads a vector, so a model change costs one slower startup instead of silently
+losing the catalog. An unchanged model finds nothing to do.
 
-What that does *not* fix is the two thresholds: cosines are not comparable across models. So on a
-model change the run also **measures both bands from your stored data and warns** when one of these
-constants now falls outside its band, naming the value it recommends:
+What it cannot repair is the thresholds, since cosines are not comparable across models. So on a
+model change the run also measures both bands from your data and **warns** when a constant falls
+outside its band, naming what it recommends:
 
 ```
 [memory] WARNING CATALOG_MIN_RELEVANCE=0.3 is outside the band the stored data implies
@@ -97,58 +84,40 @@ constants now falls outside its band, naming the value it recommends:
 ```
 
 **It never changes anything itself** — a threshold that moved on its own would drift the check that
-lets a catalog hit end a run with zero LLM calls. Applying the recommendation is yours to do, and
-takes an environment variable rather than a source edit:
-
-```bash
-CATALOG_MIN_RELEVANCE=0.71 uv run python -m beegent.run --country ... --use-case ...
-```
-
-Two limits worth knowing. The measurement runs **only on a model change**, so a value you set by
-hand under an unchanged model is not checked — the measurement is an O(n²) pass over stored vectors
-and is not worth paying every run. And `intersect()` reports no band at all when your stored use
-cases disagree about where the boundary is, which on real data happens often; no band means no
-recommendation, not a silent average.
+lets a catalog hit end a run with zero LLM calls. Two limits: the measurement runs only on a model
+change (it is an O(n²) pass, not worth paying every run), and it reports no band at all when your
+stored use cases disagree — no band means no recommendation, not a silent average.
 
 Four settings are deliberately not overridable: `PROBE_BYTES` (16 is a correctness floor — the
-GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`,
-a dict and its float default with no per-run reason to retune them, and the preview redirect hop
-cap (5 hops reaches any real download).
+GeoPackage magic signature is exactly 16 bytes), `CONFIDENCE_BY_REPORT` / `CONFIDENCE_DEFAULT`, and
+the preview redirect hop cap (5 reaches any real download).
 
 ### Map preview
 
-The web UI can draw a stored link on a map, to answer the one thing a probe cannot: whether a
-verified dataset covers the right country. The server fetches the bytes, caps them, and caches
-them **exactly as received** — it never parses a geospatial format; the browser does that.
+The web UI can draw a stored link on a map. The server fetches the bytes, caps them, and caches
+them **exactly as received** — it never parses a geospatial format; the browser does.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `PREVIEW_DIR` | next to `BEEGENT_DB`, so `~/.beegent/previews` | Where fetched payloads are cached. `""` disables previews, and an empty `BEEGENT_DB` already does |
+| `PREVIEW_DIR` | next to `BEEGENT_DB`, so `~/.beegent/previews` | Where payloads are cached. `""` disables previews, and an empty `BEEGENT_DB` already does |
 | `PREVIEW_MAX_BYTES` | `50000000` | Refused above this — never truncated. A known size is refused before any request is made |
 | `PREVIEW_TIMEOUT` | `120` | Seconds. `HTTP_TIMEOUT` suits a 16-byte probe, not a 50MB download |
 | `PREVIEW_CACHE_DAYS` | `7` | How long a cached payload is reused. `0` refetches every time |
 
-A cached payload is also dropped when the link was re-verified after it was written, so the cache
-follows the pipeline rather than drifting from it. The directory is a **cache**: deleting it is
-always safe.
-
-Geometry is always shown in EPSG:4326. The server asks the service for it where the service can
-oblige (`crs=CRS84`, `outSR=4326`), because projecting server-side beats converting thousands of
-polygons in a browser; anything that arrives projected anyway is converted in the browser instead.
+A cached payload is dropped when the link was re-verified after it was written, so the cache follows
+the pipeline rather than drifting from it. The directory is a cache: deleting it is always safe.
 
 Two things to know about what it touches:
 
-- **The browser fetches map tiles** — from `tile.openstreetmap.org` by default, and from
-  `services.arcgisonline.com` (Esri dark gray canvas) when the dark button in the corner of the map
-  is on. The light map is the default in both light and dark app themes. This is the only
-  third-party request the otherwise localhost-only app makes, and both tile URLs are named
-  constants in `ui/src/app/panes/link-map.component.ts` if you would rather point them elsewhere.
-  The map credits OpenStreetMap always and Esri when its tiles are showing, as their terms require.
-- **There is no private-IP or DNS-rebinding filter, deliberately.** The endpoint takes a
-  `link_uid` and resolves the URL from the store, so the set of reachable URLs is exactly the set
-  the pipeline already probed; the scheme allowlist is re-checked on every redirect hop. Doing
-  rebinding properly means resolving and pinning the socket yourself, and anything less is
-  decorative. If you ever expose the API beyond `127.0.0.1`, that is the gap to close first.
+- **The browser fetches map tiles** from `tile.openstreetmap.org`, or `services.arcgisonline.com`
+  when the dark button is on. This is the only third-party request the otherwise localhost-only app
+  makes; both URLs are named constants in `ui/src/app/panes/link-map.component.ts`. The map credits
+  OpenStreetMap always and Esri when its tiles show, as their terms require.
+- **There is no private-IP or DNS-rebinding filter, deliberately.** The endpoint takes a `link_uid`
+  and resolves the URL from the store, so the reachable set is exactly what the pipeline already
+  probed, and the scheme allowlist is re-checked on every redirect hop. Doing rebinding properly
+  means resolving and pinning the socket yourself; anything less is decorative. If you expose the
+  API beyond `127.0.0.1`, that is the gap to close first.
 
 ### Breadth and depth
 

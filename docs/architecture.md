@@ -45,6 +45,11 @@ catalog hit is not thrown away either — it joins the pool at step 5 as a floor
 | 6 | Gate | `beegent/pipeline/critic.py` | 0 | Decides whether the run needs help |
 | 7 | Critic | `beegent/pipeline/critic.py` | ≤1 | Says `replan` or `needs_human_review` |
 
+The web UI mirrors this. Its **Logs** tab shows the raw stream beside a live view of the same
+pipeline — catalogs, planner, geofetch, gate, critic — with the step currently running
+highlighted, so a quiet log is distinguishable from a stuck one. Freshness and rank are not shown:
+they take no measurable time and emit no step of their own.
+
 ## The store
 
 `~/.beegent/memory.db`, on by default; `BEEGENT_DB` moves it and `BEEGENT_DB=""` switches it off.

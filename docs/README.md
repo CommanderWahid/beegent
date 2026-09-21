@@ -2,7 +2,7 @@
 
 | Page | What it covers |
 |---|---|
-| [Getting started](getting-started.md) | Install, run it for the first time, read the result |
+| [Getting started](getting-started.md) | Install, run the web UI or the CLI (or a container), read the result |
 | [Configuration](configuration.md) | Every setting, CLI flags, and precedence |
 | [Backends](backends.md) | Ollama, Groq, Mistral, Databricks, and writing your own connector |
 | [Architecture](architecture.md) | The seven steps, the store, and how a run flows through them |
