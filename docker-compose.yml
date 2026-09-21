@@ -1,0 +1,32 @@
+# The safe form as the default one: loopback publish, one replica, state on a volume.
+#
+#   docker compose up --build        # http://127.0.0.1:8000
+#
+services:
+  beegent:
+    build: .
+    image: beegent
+    # 127.0.0.1 is the whole access-control story: there is NO authentication, and starting a run
+    # spends real model tokens. "8000:8000" would bind every interface and hand that to anyone
+    # who can reach this host.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - beegent-data:/data
+    environment:
+      # Ollama is not reachable from inside the container - localhost there is the container.
+      # Use a hosted backend, or point OLLAMA_BASE_URL at the host.
+      LLM_BACKEND: ${LLM_BACKEND:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      DATABRICKS_HOST: ${DATABRICKS_HOST:-}
+      DATABRICKS_TOKEN: ${DATABRICKS_TOKEN:-}
+      PLANNER_MODEL: ${PLANNER_MODEL:-}
+      GEOFETCH_MODEL: ${GEOFETCH_MODEL:-}
+      CRITIC_MODEL: ${CRITIC_MODEL:-}
+    # Bounded, not "unless-stopped": main() exits on a bad backend by design, and an endless
+    # restart loop would bury that message instead of showing it.
+    restart: on-failure:3
+
+volumes:
+  beegent-data:

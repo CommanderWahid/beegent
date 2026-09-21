@@ -29,6 +29,46 @@ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 The context size matters. Tool results are verbose, and on a small context Ollama silently drops
 the *oldest* messages — which are the system prompt and the task — so the agent wanders off.
 
+## Run it in a container
+
+Everything is built into the image — the Angular UI included — so this needs no checkout, no
+Node, and no `uv` on the host:
+
+```bash
+docker compose up --build        # http://127.0.0.1:8000
+```
+
+Or without compose:
+
+```bash
+docker build -t beegent .
+docker run --rm -p 127.0.0.1:8000:8000 -v beegent-data:/data   -e LLM_BACKEND=groq -e GROQ_API_KEY=... beegent
+```
+
+**`-p 127.0.0.1:8000:8000` is the access control.** There is no authentication in beegent, and
+starting a run spends real model tokens. Publishing as `-p 8000:8000` binds every interface and
+hands that to anyone who can reach the host.
+
+Four things worth knowing before you run it:
+
+- **One container, one process.** The run lock and the live log buffer live in memory in
+  `api/runner.py`, so a second worker or replica would hold its own lock and answer for runs it
+  never performed. No `--workers`, no scaling.
+- **Ollama is not in the container.** `localhost` inside a container is the container, so the
+  default backend has nothing to talk to. Use a hosted backend with a key, or point
+  `OLLAMA_BASE_URL` at the host.
+- **It exits on a bad backend, on purpose.** `validate()` runs before the server starts, so a
+  missing key or a serving endpoint that does not exist stops the container rather than failing
+  later mid-run. In Docker that looks like a restart loop; the message in `docker logs` is the
+  real answer.
+- **All state is on the `/data` volume** — `memory.db`, the preview cache, the embedding model
+  cache, and `candidate_list.json`. Without the volume, every restart forgets what it verified.
+
+The image carries `fastembed` and `onnxruntime` for catalog matching, which is most of its size.
+Dropping the `embeddings` extra from the `pip install` line in the `Dockerfile` makes it
+substantially smaller; `make_embedder()` returns `None` and the catalog simply stops matching by
+meaning, rather than breaking.
+
 ## Your first run
 
 ```bash

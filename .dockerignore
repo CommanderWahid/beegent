@@ -1,0 +1,34 @@
+# The build context is copied wholesale before anything runs, so what is excluded here is
+# mostly about size: the repo root holds a ~229MB screen recording and a ~6MB demo animation.
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+
+# Built or installed here, never copied in: stage 1 runs npm ci and ng build itself.
+ui/node_modules
+ui/dist
+ui/.angular
+dist/
+
+# Local state and working files, not part of the image.
+.env
+candidate_list.json
+*.mp4
+image.png
+*.bak
+
+# assets/ IS needed - angular.json pulls beegent_logo.svg from it at build time.
+# Only the heavy media is skipped.
+assets/*.webp
+assets/*.png
+
+# Documentation and tests do not ship in the runtime image.
+docs
+tests
+CONTRIBUTING.md
+CLAUDE.md

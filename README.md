@@ -50,6 +50,10 @@ Localhost only, and a run costs real model calls. `beegent-ui` has no flags — 
 and models from the environment or `.env` (`LLM_BACKEND`, `PLANNER_MODEL`, …) and shows the
 resolved names at startup. See [Backends](docs/backends.md).
 
+Prefer a container? `docker compose up --build` builds the UI and serves it on
+`127.0.0.1:8000` with no toolchain on the host — see
+[Getting started](docs/getting-started.md#run-it-in-a-container).
+
 ### Or from the command line
 
 The same pipeline, writing `candidate_list.json` instead of drawing it:

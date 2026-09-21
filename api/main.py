@@ -1,6 +1,7 @@
 """FastAPI app: read the store, start a run, stream its log."""
 
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -207,8 +208,12 @@ def main() -> None:
         f"[config] backend={connector.provider}  "
         + "  ".join(f"{r}={connector.model_for(r)}" for r in connector.ROLES)
     )
-    # Localhost only, deliberately: this API spends real money on LLM calls.
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Localhost by default, deliberately: there is no authentication here and a run spends real
+    # money on LLM calls. A container overrides the host to 0.0.0.0 and publishes the port to
+    # 127.0.0.1 instead, which keeps the same guarantee - see docs/getting-started.md.
+    host = os.environ.get("BEEGENT_HOST", "127.0.0.1")
+    port = int(os.environ.get("BEEGENT_PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
